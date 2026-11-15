@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">@color/paysplit_brand_blue</item>
+        <item name="android:windowSplashScreenBackground">@color/paysplit_brand_blue</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/paysplit_splash_mark</item>
+        <item name="android:windowSplashScreenBehavior">icon_preferred</item>
+    </style>
+</resources>
