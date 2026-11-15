@@ -6,6 +6,8 @@ PaySplit helps people set up rules to divide their salary between savings wallet
 
 ## Run on Android
 
+[Download the Android APK (60 MB)](https://drive.google.com/file/d/135zwQLThr-RW3qdjgWvr7kWTZdmqvVH1/view?usp=drivesdk) to install PaySplit on an Android device.
+
 Install Flutter 3.44.8 and Android Studio with the Android SDK. Start an Android emulator from Android Studio's Device Manager. From the project folder, run:
 
 ```sh
