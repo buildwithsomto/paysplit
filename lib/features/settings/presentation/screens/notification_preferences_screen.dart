@@ -3,12 +3,37 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:paysplit/features/settings/presentation/controllers/settings_controller.dart';
 import 'package:paysplit/features/settings/presentation/widgets/settings_widgets.dart';
+import 'package:paysplit/widgets/feedback/app_notice.dart';
 import 'package:paysplit/widgets/layout/app_page_layout.dart';
 
-class NotificationPreferencesScreen extends ConsumerWidget {
+class NotificationPreferencesScreen extends ConsumerStatefulWidget {
   const NotificationPreferencesScreen({super.key});
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<NotificationPreferencesScreen> createState() =>
+      _NotificationPreferencesScreenState();
+}
+
+class _NotificationPreferencesScreenState
+    extends ConsumerState<NotificationPreferencesScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // The toggles show the saved choices at once and refresh in place.
+    Future.microtask(() {
+      if (mounted) {
+        ref.read(settingsControllerProvider.notifier).loadPreferences();
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    ref.listen(settingsControllerProvider.select((s) => s.error), (_, next) {
+      if (next != null) showAppNotice(context, next);
+    });
+    final ready = ref.watch(
+      settingsControllerProvider.select((s) => s.preferences != null),
+    );
     final channels = ref.watch(
       settingsControllerProvider.select((s) => s.channels),
     );
@@ -29,10 +54,12 @@ class NotificationPreferencesScreen extends ConsumerWidget {
                 borderRadius: BorderRadius.circular(12),
                 child: InkWell(
                   borderRadius: BorderRadius.circular(12),
-                  onTap: () => controller.setChannel(
-                    channel,
-                    !channels.contains(channel),
-                  ),
+                  onTap: !ready
+                      ? null
+                      : () => controller.setChannel(
+                          channel,
+                          !channels.contains(channel),
+                        ),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 10,
@@ -42,17 +69,15 @@ class NotificationPreferencesScreen extends ConsumerWidget {
                       children: [
                         Expanded(
                           child: Text(
-                            '${switch (channel) {
-                              NotificationChannel.push => 'Push',
-                              NotificationChannel.sms => 'SMS',
-                              NotificationChannel.email => 'Email',
-                            }} Notification',
+                            '${channel.label} Notification',
                             style: settingsText.copyWith(fontSize: 14),
                           ),
                         ),
                         SettingsToggle(
                           value: channels.contains(channel),
-                          onChanged: (v) => controller.setChannel(channel, v),
+                          onChanged: (v) {
+                            if (ready) controller.setChannel(channel, v);
+                          },
                         ),
                       ],
                     ),
@@ -61,11 +86,7 @@ class NotificationPreferencesScreen extends ConsumerWidget {
               ),
             ),
           const Text(
-            'Choose which optional notifications you want to receive.',
-            style: TextStyle(fontSize: 12, height: 1.5),
-          ),
-          const Text(
-            'Security, verification, legal and essential service messages cannot be disabled here. Preferences never change transaction execution or status.',
+            'Choose how you hear about salary credits, completed splits, transfers and account updates. Only email is delivered right now; your push and SMS choices are saved for when they launch.',
             style: TextStyle(fontSize: 12, height: 1.5),
           ),
         ],

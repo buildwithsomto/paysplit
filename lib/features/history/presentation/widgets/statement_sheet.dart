@@ -1,176 +1,191 @@
-import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
-import 'package:paysplit/core/formatting/money.dart';
-import 'package:paysplit/features/history/presentation/controllers/history_controller.dart';
-import 'package:paysplit/features/history/presentation/controllers/history_filter_controller.dart';
-import 'package:paysplit/widgets/buttons/app_button.dart';
-import 'package:paysplit/widgets/inputs/app_select_field.dart';
-import 'package:paysplit/widgets/overlays/choice_sheet.dart';
-import 'package:paysplit/widgets/overlays/editor_sheet_layout.dart';
+import 'dart:convert';
+import 'dart:io';
 
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:paysplit/core/network/api_exception.dart';
+import 'package:paysplit/features/history/data/repositories/history_repository.dart';
+import 'package:paysplit/theme/app_colors.dart';
+import 'package:paysplit/theme/app_typography.dart';
+import 'package:paysplit/widgets/buttons/app_button.dart';
+import 'package:paysplit/widgets/overlays/editor_sheet_layout.dart';
+import 'package:share_plus/share_plus.dart';
+
+/// "Export": fetches the statement CSV for the filters on screen and hands
+/// it to the system share sheet (Save to Files, email, and so on).
 Future<void> showStatementSheet(
-  BuildContext context,
-  List<TransactionViewData> records, {
-  required bool sample,
+  BuildContext context, {
+  required TransactionQuery query,
 }) => showModalBottomSheet<void>(
   context: context,
   useRootNavigator: true,
   useSafeArea: true,
   isScrollControlled: true,
-  backgroundColor: const Color(0xFFFBFBFB),
-  clipBehavior: Clip.antiAlias,
-  shape: const RoundedRectangleBorder(
-    borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
-  ),
-  builder: (_) => StatementSheet(records: records, sample: sample),
+  builder: (_) => StatementSheet(query: query),
 );
 
-class StatementSheet extends StatefulWidget {
-  const StatementSheet({
-    required this.records,
-    required this.sample,
-    super.key,
-  });
-  final List<TransactionViewData> records;
-  final bool sample;
+class StatementSheet extends ConsumerStatefulWidget {
+  const StatementSheet({required this.query, super.key});
+  final TransactionQuery query;
   @override
-  State<StatementSheet> createState() => _StatementSheetState();
+  ConsumerState<StatementSheet> createState() => _StatementSheetState();
 }
 
-class _StatementSheetState extends State<StatementSheet> {
-  String _format = 'PDF';
-  HistoryDateRange? _range;
-  bool _preview = false;
+class _StatementSheetState extends ConsumerState<StatementSheet> {
+  /// The API caps one export at this many rows.
+  static const _maxRows = 5000;
+
+  String? _csv;
+  String? _error;
+  bool _loading = true;
+  bool _sharing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final csv = await ref
+          .read(historyRepositoryProvider)
+          .exportCsv(widget.query);
+      if (!mounted) return;
+      setState(() {
+        _csv = csv;
+        _loading = false;
+      });
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = describeError(
+          error,
+          fallback: 'The statement couldn’t be prepared.',
+        );
+      });
+    }
+  }
+
+  /// Data rows in the CSV, not counting the header.
+  int get _rows {
+    final lines = const LineSplitter()
+        .convert(_csv ?? '')
+        .where((line) => line.trim().isNotEmpty)
+        .length;
+    return lines > 0 ? lines - 1 : 0;
+  }
+
+  Future<void> _share() async {
+    final csv = _csv;
+    if (csv == null || _sharing) return;
+    setState(() => _sharing = true);
+    File? file;
+    try {
+      final directory = await getTemporaryDirectory();
+      final stamp = DateFormat('yyyyMMdd-HHmm').format(DateTime.now());
+      file = File('${directory.path}/paysplit-statement-$stamp.csv');
+      await file.writeAsString(csv, flush: true);
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(file.path, mimeType: 'text/csv')],
+          subject: 'PaySplit statement',
+        ),
+      );
+      if (mounted) Navigator.pop(context);
+    } on Object {
+      if (mounted) {
+        setState(() => _error = 'The statement couldn’t be shared. Try again.');
+      }
+    } finally {
+      // Financial records are not left behind in temporary storage.
+      try {
+        await file?.delete();
+      } on Object {
+        // Already gone.
+      }
+      if (mounted) setState(() => _sharing = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final records = filterHistory(
-      widget.records,
-      HistoryFilterState(range: _range),
-    );
-    final totals = StatementTotals.from(records);
+    final query = widget.query;
+    final rows = _rows;
+    final period = query.from == null || query.to == null
+        ? 'All dates'
+        : '${DateFormat.yMMMd().format(query.from!)} – ${DateFormat.yMMMd().format(query.to!)}';
+    final scope = [
+      switch (query.type) {
+        HistoryTab.all => 'All transactions',
+        HistoryTab.wallets => 'Wallet transactions',
+        HistoryTab.transfers => 'Beneficiary transfers',
+      },
+      if (query.direction == MoneyDirection.incoming) 'Money in',
+      if (query.direction == MoneyDirection.outgoing) 'Money out',
+      if (query.status != null) query.status!.label,
+      if ((query.search ?? '').trim().isNotEmpty) '“${query.search!.trim()}”',
+    ].join(' · ');
     return EditorSheetLayout(
-      title: _preview ? 'Statement Preview' : 'Export Statement',
-      height: 740,
+      title: 'Export Statement',
+      subtitle: 'A CSV of the transactions you’re viewing.',
+      height: 460,
       onClose: () => Navigator.pop(context),
-      bottom: AppButton(
-        label: _preview ? 'Back to Export' : 'Preview Statement',
-        onPressed: records.isEmpty
-            ? null
-            : () => setState(() => _preview = !_preview),
-      ),
+      bottom: _error != null && _csv == null
+          ? AppButton(label: 'Try Again', onPressed: _load)
+          : AppButton(
+              label: 'Share CSV',
+              busy: _loading || _sharing,
+              onPressed: rows == 0 ? null : _share,
+            ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
-        spacing: 16,
         children: [
-          if (!_preview) ...[
-            const Text(
-              'Export includes every matching record, including rows beyond the current page. Select a period and format.',
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.primaryBorder),
             ),
-            AppSelectField(
-              label: 'Format',
-              value: _format,
-              onPressed: () async {
-                final format = await showChoiceSheet(
-                  context,
-                  title: 'Statement format',
-                  choices: ['PDF', 'CSV'],
-                  label: (v) => v,
-                  selected: _format,
-                );
-                if (format != null && mounted) {
-                  setState(() => _format = format);
-                }
-              },
+            child: Column(
+              spacing: 14,
+              children: [
+                _Row(label: 'Period', value: period),
+                _Row(label: 'Includes', value: scope),
+                _Row(
+                  label: 'Transactions',
+                  value: _loading
+                      ? 'Preparing…'
+                      : _csv == null
+                      ? '—'
+                      : NumberFormat.decimalPattern().format(rows),
+                ),
+              ],
             ),
-            AppSelectField(
-              label: 'Statement Period',
-              value: _range == null
-                  ? 'All matching dates'
-                  : '${DateFormat.yMMMd().format(_range!.start)} – ${DateFormat.yMMMd().format(_range!.end)}',
-              onPressed: () async {
-                final range = await showDateRangePicker(
-                  context: context,
-                  initialDateRange: _range == null
-                      ? null
-                      : DateTimeRange(start: _range!.start, end: _range!.end),
-                  firstDate: DateTime(2000),
-                  lastDate: DateTime(DateTime.now().year + 1, 12, 31),
-                );
-                if (range != null && mounted) {
-                  setState(() => _range = (start: range.start, end: range.end));
-                }
-              },
-            ),
-            if (_range != null)
-              TextButton(
-                onPressed: () => setState(() => _range = null),
-                child: const Text('Use all matching dates'),
-              ),
-          ],
-          Text(
-            '${records.length} transactions · $_format',
-            style: const TextStyle(fontWeight: FontWeight.w600),
           ),
-          if (records.isEmpty)
-            const Text('There are no transactions for this selection.'),
-          if (_preview) ...[
-            const Text(
-              'SAMPLE — NOT PROOF OF PAYMENT',
-              style: TextStyle(fontWeight: FontWeight.w700),
+          const SizedBox(height: 12),
+          Semantics(
+            liveRegion: true,
+            child: Text(
+              _error ??
+                  (!_loading && _csv != null && rows == 0
+                      ? 'There are no transactions to export for these filters.'
+                      : rows >= _maxRows
+                      ? 'This export holds the first ${NumberFormat.decimalPattern().format(_maxRows)} transactions. Narrow the dates to export the rest.'
+                      : 'Amounts are in naira. Dates use West Africa Time.'),
+              style: AppTypography.body.copyWith(
+                fontSize: 12,
+                color: _error == null ? AppColors.body : AppColors.error,
+              ),
             ),
-            _TotalRow('Salary received', totals.salaryMinor),
-            _TotalRow('Beneficiary payments', totals.paidMinor),
-            _TotalRow('Allocated to wallets', totals.allocatedMinor),
-            _TotalRow('Returned from wallets', totals.returnedMinor),
-            _TotalRow('Fees', totals.feeMinor),
-            Text(
-              '${totals.completed} successful · ${totals.unsettled} other statuses. Totals include successful records only; internal allocations are not new income.',
-            ),
-            if (_format == 'CSV')
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: SelectableText(
-                  statementCsv(records),
-                  style: const TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 12,
-                    height: 1.5,
-                  ),
-                ),
-              )
-            else
-              for (final record in records)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    spacing: 4,
-                    children: [
-                      Row(
-                        spacing: 12,
-                        children: [
-                          Expanded(child: Text(record.title)),
-                          Expanded(
-                            child: Text(
-                              Money.format(record.amountMinor),
-                              textAlign: TextAlign.right,
-                            ),
-                          ),
-                        ],
-                      ),
-                      Text(
-                        '${record.reference}\n${DateFormat.yMMMd().format(record.time)} · ${record.status.label}',
-                        style: const TextStyle(fontSize: 12, height: 1.5),
-                      ),
-                    ],
-                  ),
-                ),
-            AppButton(label: 'Download $_format', onPressed: null),
-          ],
-          Text(
-            widget.sample
-                ? 'This is a local sample preview. Downloading or sharing an official statement will require the provided API.'
-                : 'Your account is not connected. Statement downloads will be available after API integration.',
           ),
         ],
       ),
@@ -178,16 +193,32 @@ class _StatementSheetState extends State<StatementSheet> {
   }
 }
 
-class _TotalRow extends StatelessWidget {
-  const _TotalRow(this.label, this.amount);
-  final String label;
-  final int amount;
+class _Row extends StatelessWidget {
+  const _Row({required this.label, required this.value});
+  final String label, value;
   @override
   Widget build(BuildContext context) => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
     spacing: 16,
     children: [
-      Expanded(child: Text(label)),
-      Expanded(child: Text(Money.format(amount), textAlign: TextAlign.right)),
+      Expanded(
+        child: Text(
+          label,
+          style: const TextStyle(fontSize: 14, color: Color(0xFF696969)),
+        ),
+      ),
+      Expanded(
+        flex: 2,
+        child: Text(
+          value,
+          textAlign: TextAlign.right,
+          style: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+            color: Color(0xFF171918),
+          ),
+        ),
+      ),
     ],
   );
 }

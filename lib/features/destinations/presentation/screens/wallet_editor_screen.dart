@@ -3,31 +3,26 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:paysplit/features/destinations/presentation/controllers/destinations_controller.dart';
 import 'package:paysplit/features/destinations/presentation/controllers/wallet_editor_controller.dart';
+import 'package:paysplit/features/destinations/presentation/widgets/category_picker.dart';
 import 'package:paysplit/features/destinations/presentation/widgets/destination_editor_actions.dart';
 import 'package:paysplit/features/destinations/presentation/widgets/destination_success_sheet.dart';
 import 'package:paysplit/features/setup/presentation/widgets/setup_layout.dart';
 import 'package:paysplit/theme/app_typography.dart';
 import 'package:paysplit/widgets/app_svg_icon.dart';
+import 'package:paysplit/features/destinations/data/repositories/destinations_repository.dart';
 import 'package:paysplit/widgets/buttons/app_button.dart';
+import 'package:paysplit/widgets/feedback/app_notice.dart';
 import 'package:paysplit/widgets/inputs/app_input_field.dart';
 import 'package:paysplit/widgets/inputs/app_select_field.dart';
 import 'package:paysplit/widgets/overlays/choice_sheet.dart';
 import 'package:paysplit/widgets/overlays/editor_sheet_layout.dart';
 
-Future<void> showWalletEditor(
-  BuildContext context, {
-  WalletViewData? initial,
-}) async {
+Future<void> showWalletEditor(BuildContext context, {Wallet? initial}) async {
   final result = await showModalBottomSheet<({String id, bool createRule})>(
     context: context,
     useRootNavigator: true,
     useSafeArea: true,
     isScrollControlled: true,
-    backgroundColor: const Color(0xFFFBFBFB),
-    clipBehavior: Clip.antiAlias,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
-    ),
     builder: (_) => ProviderScope(
       overrides: [
         walletEditorControllerProvider.overrideWith(
@@ -41,9 +36,7 @@ Future<void> showWalletEditor(
   if (result.createRule) {
     context.push('/rules/new?wallet=${result.id}');
   } else if (initial != null) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Changes saved locally.')));
+    showAppNotice(context, 'Wallet updated.');
   } else {
     await showDestinationSuccess(context, beneficiary: false);
   }
@@ -52,7 +45,7 @@ Future<void> showWalletEditor(
 class WalletEditorScreen extends ConsumerStatefulWidget {
   const WalletEditorScreen({this.setup = false, this.initial, super.key});
   final bool setup;
-  final WalletViewData? initial;
+  final Wallet? initial;
   @override
   ConsumerState<WalletEditorScreen> createState() => _WalletEditorScreenState();
 }
@@ -66,9 +59,10 @@ class _WalletEditorScreenState extends ConsumerState<WalletEditorScreen> {
     final initial = widget.initial;
     if (initial != null) {
       _name.text = initial.name;
-      _target.text = initial.targetMinor == null
-          ? ''
-          : '${initial.targetMinor! ~/ 100}.${(initial.targetMinor! % 100).toString().padLeft(2, '0')}';
+      if (initial.targetMinor case final target?) {
+        _target.text =
+            '${target ~/ 100}.${(target % 100).toString().padLeft(2, '0')}';
+      }
     }
   }
 
@@ -79,12 +73,12 @@ class _WalletEditorScreenState extends ConsumerState<WalletEditorScreen> {
     super.dispose();
   }
 
-  void _save({bool createRule = false}) {
+  Future<void> _save({bool createRule = false}) async {
     FocusManager.instance.primaryFocus?.unfocus();
-    final wallet = ref
+    final wallet = await ref
         .read(walletEditorControllerProvider.notifier)
         .save(name: _name.text, target: _target.text);
-    if (wallet == null) return;
+    if (!mounted || wallet == null) return;
     if (widget.setup) {
       context.push('/setup/beneficiary');
     } else {
@@ -96,6 +90,18 @@ class _WalletEditorScreenState extends ConsumerState<WalletEditorScreen> {
   Widget build(BuildContext context) {
     final state = ref.watch(walletEditorControllerProvider);
     final controller = ref.read(walletEditorControllerProvider.notifier);
+    final accentList = ref.watch(walletAccentsProvider);
+    final accents = accentList.value ?? const <WalletAccent>[];
+    final accent = state.accent ?? accents.firstOrNull;
+    final arrow = widget.setup
+        ? 'assets/icons/kyc/f26f0.svg'
+        : 'assets/icons/destinations/cefc6.svg';
+    ref.listen(walletEditorControllerProvider.select((s) => s.errors['form']), (
+      previous,
+      next,
+    ) {
+      if (next != null) showAppNotice(context, next);
+    });
     final fields = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -108,20 +114,16 @@ class _WalletEditorScreenState extends ConsumerState<WalletEditorScreen> {
         ),
         const SizedBox(height: 16),
         AppSelectField(
-          arrowAsset: widget.setup
-              ? 'assets/icons/kyc/f26f0.svg'
-              : 'assets/icons/destinations/cefc6.svg',
+          arrowAsset: arrow,
           label: 'Select Category *',
-          value: state.category,
+          value: state.category?.name,
           hint: 'Select',
           error: state.errors['category'],
           onPressed: () async {
-            FocusManager.instance.primaryFocus?.unfocus();
-            final category = await showChoiceSheet(
+            final category = await pickCategory(
               context,
-              title: 'Wallet category',
-              choices: walletCategories,
-              label: (v) => v,
+              ref,
+              title: 'Wallet Category',
               selected: state.category,
             );
             if (category != null && mounted) {
@@ -187,16 +189,21 @@ class _WalletEditorScreenState extends ConsumerState<WalletEditorScreen> {
           borderRadius: BorderRadius.circular(12),
           child: InkWell(
             borderRadius: BorderRadius.circular(12),
-            onTap: () async {
-              final accent = await showChoiceSheet(
-                context,
-                title: 'Accent color',
-                choices: WalletAccent.values,
-                label: (v) => v.label,
-                selected: state.accent,
-              );
-              if (accent != null && mounted) controller.selectAccent(accent);
-            },
+            onTap: accents.isEmpty
+                ? () => ref.invalidate(walletAccentsProvider)
+                : () async {
+                    FocusManager.instance.primaryFocus?.unfocus();
+                    final picked = await showChoiceSheet(
+                      context,
+                      title: 'Accent Color',
+                      choices: accents,
+                      label: (v) => v.label,
+                      selected: accent,
+                    );
+                    if (picked != null && mounted) {
+                      controller.selectAccent(picked);
+                    }
+                  },
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
@@ -211,20 +218,19 @@ class _WalletEditorScreenState extends ConsumerState<WalletEditorScreen> {
                     height: 28,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: state.accent.color,
+                      color: accent?.color ?? const Color(0xFFE4E4E4),
                     ),
                   ),
                   Expanded(
                     child: Text(
-                      state.accent.label,
+                      accent?.label ??
+                          (accentList.hasError
+                              ? 'Colours couldn’t be loaded. Tap to retry'
+                              : 'Loading colours…'),
                       style: AppTypography.input.copyWith(color: Colors.black),
                     ),
                   ),
-                  AppSvgIcon(
-                    widget.setup
-                        ? 'assets/icons/setup/f26f0.svg'
-                        : 'assets/icons/destinations/cefc6.svg',
-                  ),
+                  AppSvgIcon(arrow),
                 ],
               ),
             ),
@@ -237,7 +243,7 @@ class _WalletEditorScreenState extends ConsumerState<WalletEditorScreen> {
         step: 2,
         title: 'Create First Wallet',
         onBack: () => context.canPop() ? context.pop() : context.go('/setup'),
-        bottom: AppButton(label: 'Next', onPressed: _save),
+        bottom: AppButton(label: 'Next', busy: state.busy, onPressed: _save),
         child: fields,
       );
     }
@@ -245,6 +251,7 @@ class _WalletEditorScreenState extends ConsumerState<WalletEditorScreen> {
       title: widget.initial == null ? 'Create New Wallet' : 'Edit Wallet',
       onClose: () => Navigator.pop(context),
       bottom: DestinationEditorActions(
+        busy: state.busy,
         onSave: _save,
         onSaveAndCreateRule: () => _save(createRule: true),
       ),

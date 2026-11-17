@@ -8,8 +8,8 @@ import 'package:paysplit/theme/app_colors.dart';
 import 'package:paysplit/theme/app_glass.dart';
 import 'package:paysplit/widgets/app_svg_icon.dart';
 
-/// Material owns feedback and keyboard resizing; GlassScaffold owns the
-/// refracting backdrop and floating navigation, following HePaid's UI layer.
+/// The outer Scaffold resizes the body for the keyboard; GlassScaffold owns
+/// the refracting backdrop and the floating navigation bar.
 class AppNavigationShell extends StatelessWidget {
   const AppNavigationShell({
     required this.child,
@@ -18,7 +18,7 @@ class AppNavigationShell extends StatelessWidget {
   });
   final Widget child;
   final String location;
-  static const destinations = [
+  static const _destinations = [
     ('Home', '/home', 'e8991.svg'),
     ('History', '/history', '9f5d6.svg'),
     ('Destination', '/destinations', 'c26b0.svg'),
@@ -32,10 +32,10 @@ class AppNavigationShell extends StatelessWidget {
     final largeLabels = scaledLabel > 15;
     final horizontalPadding = math.max(16.0, (media.size.width - 500) / 2);
     final itemWidth =
-        (media.size.width - horizontalPadding * 2 - 16) / destinations.length;
+        (media.size.width - horizontalPadding * 2 - 16) / _destinations.length;
     var labelHeight = scaledLabel * 1.2;
     if (largeLabels) {
-      for (final (label, _, _) in destinations) {
+      for (final (label, _, _) in _destinations) {
         final painter = TextPainter(
           text: TextSpan(
             text: label,
@@ -53,10 +53,10 @@ class AppNavigationShell extends StatelessWidget {
         painter.dispose();
       }
     }
-    final selected = destinations.indexWhere((d) => d.$2 == location);
+    final selected = _destinations.indexWhere((d) => d.$2 == location);
     final nav = GlassTabBar.bottom(
       tabs: [
-        for (final (label, _, asset) in destinations)
+        for (final (label, _, asset) in _destinations)
           GlassTab(
             icon: largeLabels
                 ? _NavigationContent(
@@ -79,7 +79,7 @@ class AppNavigationShell extends StatelessWidget {
           ),
       ],
       selectedIndex: selected < 0 ? 0 : selected,
-      onTabSelected: (index) => context.go(destinations[index].$2),
+      onTabSelected: (index) => context.go(_destinations[index].$2),
       horizontalPadding: horizontalPadding,
       verticalPadding: 18,
       barHeight: math.max(80, 24 + 8 + labelHeight + 32),
@@ -118,25 +118,17 @@ class AppNavigationShell extends StatelessWidget {
     final bottomClearance = keyboardVisible
         ? 0.0
         : nav.preferredSize.height + media.padding.bottom;
-    final theme = Theme.of(context);
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: location == '/home'
           ? SystemUiOverlayStyle.light
           : SystemUiOverlayStyle.dark,
-      child: Theme(
-        data: theme.copyWith(
-          snackBarTheme: theme.snackBarTheme.copyWith(
-            insetPadding: EdgeInsets.fromLTRB(16, 0, 16, bottomClearance + 8),
-          ),
-        ),
-        child: Scaffold(
-          body: GlassScaffold(
-            backgroundColor: AppColors.background,
-            edgeFade: false,
-            resizeToAvoidBottomInset: false,
-            bottomBar: keyboardVisible ? null : nav,
-            body: AppNavigationInsets(bottom: bottomClearance, child: child),
-          ),
+      child: Scaffold(
+        body: GlassScaffold(
+          backgroundColor: AppColors.background,
+          edgeFade: false,
+          resizeToAvoidBottomInset: false,
+          bottomBar: keyboardVisible ? null : nav,
+          body: AppNavigationInsets(bottom: bottomClearance, child: child),
         ),
       ),
     );

@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:paysplit/features/rules/presentation/screens/run_now_screen.dart';
 import 'package:paysplit/core/config/app_config.dart';
-import 'package:paysplit/features/kyc/presentation/screens/kyc_code_screen.dart';
+import 'package:paysplit/core/session/session_controller.dart';
+import 'package:paysplit/core/session/session_providers.dart';
 import 'package:paysplit/features/settings/presentation/screens/settings_screen.dart';
 import 'package:paysplit/features/settings/presentation/screens/profile_details_screen.dart';
 import 'package:paysplit/features/settings/presentation/screens/notification_preferences_screen.dart';
 import 'package:paysplit/features/settings/presentation/screens/change_password_screen.dart';
-import 'package:paysplit/features/settings/presentation/screens/device_management_screen.dart';
-import 'package:paysplit/features/settings/presentation/screens/security_preview_screen.dart';
 import 'package:paysplit/features/history/presentation/screens/history_screen.dart';
 import 'package:paysplit/features/history/presentation/screens/transaction_detail_screen.dart';
 import 'package:paysplit/core/routing/app_sheet_page.dart';
@@ -24,9 +23,9 @@ import 'package:paysplit/app/navigation/app_navigation_shell.dart';
 import 'package:paysplit/features/home/presentation/screens/home_screen.dart';
 import 'package:paysplit/features/notifications/presentation/screens/notifications_screen.dart';
 import 'package:paysplit/features/salary/presentation/screens/salary_account_screen.dart';
+import 'package:paysplit/features/salary/presentation/screens/sandbox_tools_screen.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:paysplit/app/showcase/app_showcase_screen.dart';
 import 'package:paysplit/app/startup/app_splash_screen.dart';
 import 'package:paysplit/features/auth/presentation/screens/forgot_password_screen.dart';
 import 'package:paysplit/features/auth/presentation/screens/login_screen.dart';
@@ -40,25 +39,60 @@ import 'package:paysplit/features/kyc/presentation/screens/identity_screen.dart'
 import 'package:paysplit/features/kyc/presentation/screens/liveness_screen.dart';
 import 'package:paysplit/features/kyc/presentation/screens/kyc_result_screen.dart';
 
+/// Routes a signed-out visitor may open.
+const _publicPaths = {
+  '/',
+  '/login',
+  '/signup',
+  '/signup/password',
+  '/forgot-password',
+  '/verify',
+  '/reset-password',
+};
+
+/// Entry screens a signed-in user is moved past.
+const _signedOutOnlyPaths = {'/login', '/signup', '/forgot-password'};
+
+/// The rule editor for a link's query: `id` opens an existing rule, while
+/// `beneficiary` or `wallet` starts a new one for that destination. During
+/// setup the only destination a link names is the beneficiary just added.
+RuleEditorRoute _ruleEditor(GoRouterState state, {bool setup = false}) {
+  final query = state.uri.queryParameters;
+  final beneficiary = query['beneficiary'];
+  return RuleEditorRoute(
+    setup: setup,
+    id: setup ? null : query['id'],
+    destinationId: beneficiary ?? (setup ? null : query['wallet']),
+    type: beneficiary != null
+        ? RuleDestinationType.beneficiary
+        : RuleDestinationType.wallet,
+  );
+}
+
 final appRouterProvider = Provider<GoRouter>((ref) {
-  final showcase = ref.watch(appConfigProvider).showcaseEnabled;
+  final sandboxTools = ref.watch(appConfigProvider).sandboxToolsEnabled;
+  // Re-runs the guard whenever the session starts, ends or expires.
+  final sessionChanges = ValueNotifier<int>(0);
+  ref.listen(sessionControllerProvider, (previous, next) {
+    if (previous?.status != next.status) sessionChanges.value++;
+  });
+  ref.onDispose(sessionChanges.dispose);
   final router = GoRouter(
     restorationScopeId: 'paysplit_routes',
-    initialLocation: showcase
-        ? const String.fromEnvironment('INITIAL_ROUTE', defaultValue: '/')
-        : '/',
-    redirect: (context, state) =>
-        !showcase &&
-            (state.uri.path == '/showcase' ||
-                state.uri.path == '/splash-preview')
-        ? '/'
-        : null,
+    refreshListenable: sessionChanges,
+    redirect: (context, state) {
+      final path = state.uri.path;
+      final public = _publicPaths.contains(path);
+      return switch (ref.read(sessionControllerProvider).status) {
+        // The splash restores the stored session before anything else opens.
+        SessionStatus.unknown => public ? null : '/',
+        SessionStatus.signedOut => public ? null : '/login',
+        SessionStatus.authenticated =>
+          _signedOutOnlyPaths.contains(path) ? '/home' : null,
+      };
+    },
     routes: [
       GoRoute(path: '/', builder: (context, state) => const AppSplashScreen()),
-      GoRoute(
-        path: '/splash-preview',
-        builder: (context, state) => const AppSplashScreen(advance: false),
-      ),
       GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
       GoRoute(
         path: '/signup',
@@ -84,10 +118,11 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: '/welcome',
         builder: (context, state) => const WelcomeScreen(),
       ),
-      GoRoute(
-        path: '/showcase',
-        builder: (context, state) => const AppShowcaseScreen(),
-      ),
+      if (sandboxTools)
+        GoRoute(
+          path: '/sandbox',
+          builder: (context, state) => const SandboxToolsScreen(),
+        ),
       ShellRoute(
         restorationScopeId: 'main_tabs',
         pageBuilder: (context, state, child) => MaterialPage<void>(
@@ -170,30 +205,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const ChangePasswordScreen(),
       ),
       GoRoute(
-        path: '/profile/devices',
-        builder: (context, state) => const DeviceManagementScreen(),
-      ),
-      GoRoute(
-        path: '/profile/delete',
-        builder: (context, state) => const DeleteAccountScreen(),
-      ),
-      GoRoute(
-        path: '/profile/security',
-        builder: (context, state) => SecurityPreviewScreen(
-          biometrics: state.uri.queryParameters['kind'] == 'biometrics',
-        ),
-      ),
-      GoRoute(
         path: '/kyc',
         builder: (context, state) => const ProfileBasicsScreen(),
       ),
       GoRoute(
         path: '/kyc/identity',
         builder: (context, state) => const IdentityScreen(),
-      ),
-      GoRoute(
-        path: '/kyc/code',
-        builder: (context, state) => const KycCodeScreen(),
       ),
       GoRoute(
         path: '/kyc/liveness',
@@ -222,15 +239,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/setup/rule',
-        builder: (context, state) => RuleEditorRoute(
-          setup: true,
-          destinationId:
-              state.uri.queryParameters['beneficiary'] ??
-              state.uri.queryParameters['wallet'],
-          type: state.uri.queryParameters.containsKey('beneficiary')
-              ? RuleDestinationType.beneficiary
-              : RuleDestinationType.wallet,
-        ),
+        builder: (context, state) => _ruleEditor(state, setup: true),
       ),
       GoRoute(
         path: '/run-now',
@@ -238,8 +247,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/split-history',
-        builder: (context, state) =>
-            SplitHistoryScreen(ruleId: state.uri.queryParameters['rule']),
+        builder: (context, state) => const SplitHistoryScreen(),
       ),
       GoRoute(
         path: '/split-history/:id',
@@ -248,18 +256,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/rules/new',
-        pageBuilder: (context, state) => AppSheetPage(
-          key: state.pageKey,
-          child: RuleEditorRoute(
-            id: state.uri.queryParameters['id'],
-            destinationId:
-                state.uri.queryParameters['beneficiary'] ??
-                state.uri.queryParameters['wallet'],
-            type: state.uri.queryParameters.containsKey('beneficiary')
-                ? RuleDestinationType.beneficiary
-                : RuleDestinationType.wallet,
-          ),
-        ),
+        pageBuilder: (context, state) =>
+            AppSheetPage(key: state.pageKey, child: _ruleEditor(state)),
       ),
       GoRoute(
         path: '/rules/saved',
@@ -269,10 +267,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
               ? null
               : '/rules';
         },
-        pageBuilder: (context, state) => AppSheetPage(
-          key: state.pageKey,
-          child: RuleSavedSheet(id: state.uri.queryParameters['id']!),
-        ),
+        pageBuilder: (context, state) =>
+            AppSheetPage(key: state.pageKey, child: const RuleSavedSheet()),
       ),
       GoRoute(
         path: '/rules/:id',

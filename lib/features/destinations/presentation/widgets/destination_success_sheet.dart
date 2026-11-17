@@ -10,11 +10,6 @@ Future<void> showDestinationSuccess(
   useRootNavigator: true,
   useSafeArea: true,
   isScrollControlled: true,
-  backgroundColor: const Color(0xFFFBFBFB),
-  shape: const RoundedRectangleBorder(
-    borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
-  ),
-  clipBehavior: Clip.antiAlias,
   builder: (sheetContext) => DestinationSuccessSheet(
     beneficiary: beneficiary,
     onClose: () => Navigator.pop(sheetContext),

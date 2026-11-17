@@ -1,14 +1,14 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
-import 'package:paysplit/features/kyc/presentation/controllers/kyc_controller.dart';
+import 'package:paysplit/features/kyc/data/models/kyc_models.dart';
 import 'package:paysplit/features/setup/presentation/controllers/setup_progress_provider.dart';
 import 'package:paysplit/theme/app_colors.dart';
 import 'package:paysplit/widgets/app_svg_icon.dart';
+import 'package:paysplit/widgets/brand/success_illustration.dart';
 import 'package:paysplit/widgets/buttons/app_button.dart';
+import 'package:paysplit/widgets/cards/step_status_card.dart';
 
 class SetupProgressSheet extends ConsumerWidget {
   const SetupProgressSheet({super.key});
@@ -16,14 +16,6 @@ class SetupProgressSheet extends ConsumerWidget {
   void _open(BuildContext context, String path) {
     // Replace this modal so Back returns to the dashboard, not a stale overlay.
     context.replace(path);
-  }
-
-  String _configurationPath(SetupProgress progress) {
-    if (!progress.salaryComplete) return '/setup';
-    if (!progress.walletComplete) return '/setup/wallet';
-    if (!progress.beneficiaryComplete) return '/setup/beneficiary';
-    if (!progress.ruleComplete) return '/setup/rule';
-    return '/setup';
   }
 
   @override
@@ -49,7 +41,7 @@ class SetupProgressSheet extends ConsumerWidget {
                   Positioned(
                     top: -346,
                     left: (MediaQuery.sizeOf(context).width - 910) / 2,
-                    child: const _SetupBurst(),
+                    child: const SuccessRays(),
                   ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 47, 16, 12),
@@ -74,7 +66,7 @@ class SetupProgressSheet extends ConsumerWidget {
                             ConstrainedBox(
                               constraints: const BoxConstraints(maxWidth: 329),
                               child: const Text(
-                                'Complete your identity and salary setup.',
+                                'Verify your account to upgrade to a Tier 2. Unlock splitting and get a dedicated account number.',
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
                                   color: Color(0xFF475467),
@@ -86,39 +78,51 @@ class SetupProgressSheet extends ConsumerWidget {
                           ],
                         ),
                         const SizedBox(height: 20),
-                        const _SetupStep(
+                        const StepStatusCard(
                           step: 1,
                           title: 'Sign up Account',
                           description: 'Create your PaySplit account',
-                          done: true,
+                          state: StepProgress.done,
                         ),
-                        const _StepConnector(),
-                        _SetupStep(
+                        const StepConnector(),
+                        StepStatusCard(
                           step: 2,
                           title: 'Profile & Identity Verification',
-                          description: hasStatus
-                              ? 'Pending review'
-                              : progress.identityComplete
-                              ? 'Sample identity approved'
-                              : 'Verify using a government-issued ID',
-                          done: progress.identityComplete,
-                          onTap: () => _open(
-                            context,
-                            progress.identityComplete
-                                ? '/kyc/result'
-                                : identityPath,
-                          ),
+                          description: switch (progress.identityStatus) {
+                            KycStatus.unverified =>
+                              'Verify using a government-issued ID',
+                            KycStatus.inProgress =>
+                              'In progress. Continue where you left off',
+                            KycStatus.inReview => 'Pending review',
+                            KycStatus.approved => 'Identity approved',
+                            KycStatus.actionRequired =>
+                              'One step needs another try',
+                            KycStatus.rejected => 'Verification unsuccessful',
+                            KycStatus.reverificationRequired =>
+                              'Re-verification required',
+                          },
+                          state: switch (progress.identityStatus) {
+                            KycStatus.approved => StepProgress.done,
+                            KycStatus.actionRequired ||
+                            KycStatus.rejected ||
+                            KycStatus.reverificationRequired =>
+                              StepProgress.attention,
+                            _ => StepProgress.pending,
+                          },
+                          onTap: () => _open(context, identityPath),
                         ),
-                        const _StepConnector(),
-                        _SetupStep(
+                        const StepConnector(),
+                        StepStatusCard(
                           step: 3,
                           title: 'Setup Checklist',
                           description:
                               'Add salary source and set your first rule.',
-                          done: progress.configurationComplete,
-                          // Draft configuration is permitted before approval.
+                          state: progress.configurationComplete
+                              ? StepProgress.done
+                              : StepProgress.pending,
+                          muted: true,
                           onTap: () =>
-                              _open(context, _configurationPath(progress)),
+                              _open(context, progress.configurationPath),
                         ),
                       ],
                     ),
@@ -155,7 +159,7 @@ class SetupProgressSheet extends ConsumerWidget {
                   _open(
                     context,
                     progress.identityComplete
-                        ? _configurationPath(progress)
+                        ? progress.configurationPath
                         : identityPath,
                   );
                 }
@@ -190,8 +194,8 @@ class _ProgressRing extends StatelessWidget {
                 ),
               ),
               Positioned.fill(
-                // The source's static quarter circle does not match its labels.
-                // This data-driven arc shows the actual completed fraction.
+                // The arc is drawn from the reported percent, over the
+                // ring artwork.
                 child: CircularProgressIndicator(
                   value: progress.fraction,
                   strokeWidth: 22 * scale,
@@ -218,205 +222,4 @@ class _ProgressRing extends StatelessWidget {
       ),
     );
   }
-}
-
-class _SetupStep extends StatelessWidget {
-  const _SetupStep({
-    required this.step,
-    required this.title,
-    required this.description,
-    required this.done,
-    this.onTap,
-  });
-  final int step;
-  final String title;
-  final String description;
-  final bool done;
-  final VoidCallback? onTap;
-  @override
-  Widget build(BuildContext context) => Semantics(
-    button: onTap != null,
-    child: Material(
-      color: Colors.white,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(20),
-        side: BorderSide(
-          color: step == 3 ? const Color(0xFFE4E4E4) : AppColors.primaryBorder,
-        ),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: EdgeInsets.all(step == 3 ? 16 : 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            spacing: 6,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: done ? AppColors.primary : const Color(0xFFC9C9C9),
-                      borderRadius: BorderRadius.circular(50),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      spacing: 10,
-                      children: [
-                        SizedBox.square(
-                          dimension: 14,
-                          child: Align(
-                            alignment: Alignment.topCenter,
-                            child: SvgPicture.asset(
-                              'assets/icons/setup-progress/54e24.svg',
-                              excludeFromSemantics: true,
-                            ),
-                          ),
-                        ),
-                        Text(
-                          'Step $step',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            height: 1,
-                            letterSpacing: .3,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (done) const _DoneBadge(),
-                ],
-              ),
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 16,
-                  height: 1.25,
-                  letterSpacing: .3,
-                  fontWeight: FontWeight.w600,
-                  color: Color(0xFF121212),
-                ),
-              ),
-              Text(
-                description,
-                style: const TextStyle(
-                  fontSize: 14,
-                  height: 24 / 14,
-                  color: Color(0xFF4F4E55),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    ),
-  );
-}
-
-class _DoneBadge extends StatelessWidget {
-  const _DoneBadge();
-  @override
-  Widget build(BuildContext context) => Container(
-    constraints: const BoxConstraints(minWidth: 65),
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-    decoration: BoxDecoration(
-      color: const Color(0xFF34C759),
-      borderRadius: BorderRadius.circular(12),
-      border: Border.all(color: Colors.white),
-      boxShadow: const [
-        BoxShadow(
-          color: Color(0x3334C759),
-          offset: Offset(0, 2),
-          blurRadius: 5,
-        ),
-      ],
-    ),
-    child: const Row(
-      mainAxisSize: MainAxisSize.min,
-      mainAxisAlignment: MainAxisAlignment.center,
-      spacing: 4,
-      children: [
-        AppSvgIcon('assets/icons/setup-progress/5c658.svg', size: 14),
-        Text(
-          'Done',
-          style: TextStyle(
-            fontFamily: 'Lato',
-            fontSize: 10,
-            height: 1,
-            color: Colors.white,
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
-class _StepConnector extends StatelessWidget {
-  const _StepConnector();
-  @override
-  Widget build(BuildContext context) => SizedBox(
-    height: 20,
-    child: Center(
-      child: RotatedBox(
-        quarterTurns: 1,
-        child: SvgPicture.asset(
-          'assets/icons/setup-progress/aac2c.svg',
-          excludeFromSemantics: true,
-        ),
-      ),
-    ),
-  );
-}
-
-class _SetupBurst extends StatelessWidget {
-  const _SetupBurst();
-  static const _angles = [0.0, 52.61, 105.22, 157.84, -149.55, -96.94, -44.33];
-  static const _assets = [
-    'f59ad.svg',
-    '977de.svg',
-    '10066.svg',
-    'f761c.svg',
-    'f497a.svg',
-    '3145d.svg',
-    '52490.svg',
-  ];
-  @override
-  Widget build(BuildContext context) => IgnorePointer(
-    child: ExcludeSemantics(
-      child: SizedBox.square(
-        dimension: 910,
-        child: Stack(
-          children: [
-            for (var i = 0; i < _assets.length; i++)
-              Center(
-                child: Transform.rotate(
-                  angle: _angles[i] * math.pi / 180,
-                  child: SizedBox.square(
-                    dimension: 643.511,
-                    child: Stack(
-                      children: [
-                        Positioned(
-                          left: 643.511 * .5923,
-                          top: 643.511 * .3552,
-                          child: SvgPicture.asset(
-                            'assets/icons/setup-progress/${_assets[i]}',
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
-    ),
-  );
 }

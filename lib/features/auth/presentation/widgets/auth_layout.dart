@@ -14,7 +14,6 @@ class AuthLayout extends StatelessWidget {
     this.titleGap = 24,
     this.formGap = 40,
     this.largeTitle = false,
-    this.footer,
     super.key,
   });
   final Widget? header;
@@ -25,7 +24,6 @@ class AuthLayout extends StatelessWidget {
   final double titleGap;
   final double formGap;
   final bool largeTitle;
-  final Widget? footer;
 
   @override
   Widget build(BuildContext context) => AnnotatedRegion<SystemUiOverlayStyle>(
@@ -67,12 +65,6 @@ class AuthLayout extends StatelessWidget {
           ),
         ),
       ),
-      bottomNavigationBar: footer == null
-          ? null
-          : SafeArea(
-              minimum: const EdgeInsets.fromLTRB(16, 16, 16, 18),
-              child: footer!,
-            ),
     ),
   );
 }

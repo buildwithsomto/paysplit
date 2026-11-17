@@ -1,4 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:paysplit/core/formatting/money.dart';
+
+/// An amount as the dashboard shows it: masked while balances are hidden.
+String dashboardAmount(int minor, {required bool visible}) =>
+    visible ? Money.format(minor) : '••••••';
+
+/// A figure with at most one decimal and no trailing `.0`: `20`, `95.8`.
+String compactNumber(double value) => value == value.roundToDouble()
+    ? '${value.round()}'
+    : value.toStringAsFixed(1);
 
 class DashboardCard extends StatelessWidget {
   const DashboardCard({

@@ -5,7 +5,6 @@ import 'package:paysplit/theme/app_typography.dart';
 
 abstract final class AppTheme {
   static final light = ThemeData(
-    useMaterial3: true,
     fontFamily: 'Inter',
     scaffoldBackgroundColor: AppColors.background,
     colorScheme: ColorScheme.fromSeed(
@@ -16,24 +15,23 @@ abstract final class AppTheme {
       error: AppColors.error,
     ),
     textTheme: const TextTheme(
-      headlineSmall: AppTypography.title,
-      titleLarge: AppTypography.heading,
       bodyMedium: AppTypography.body,
       bodyLarge: AppTypography.input,
       labelLarge: AppTypography.button,
     ),
-    appBarTheme: const AppBarTheme(
-      backgroundColor: AppColors.background,
-      surfaceTintColor: Colors.transparent,
-      elevation: 0,
-      systemOverlayStyle: systemOverlay,
+    bottomSheetTheme: const BottomSheetThemeData(
+      backgroundColor: AppColors.sheet,
+      modalBackgroundColor: AppColors.sheet,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
+      ),
     ),
     textSelectionTheme: const TextSelectionThemeData(
       cursorColor: AppColors.action,
       selectionColor: AppColors.primaryBorder,
       selectionHandleColor: AppColors.action,
     ),
-    snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
   );
 
   static const systemOverlay = SystemUiOverlayStyle(

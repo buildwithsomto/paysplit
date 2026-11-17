@@ -1,7 +1,7 @@
 import 'dart:math' as math;
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
-/// The same material settings used by HePaid's pre-API presentation layer.
+/// Liquid glass material for the navigation bar and its selection indicator.
 abstract final class AppGlass {
   static const controls = LiquidGlassSettings.figma(
     refraction: 83,

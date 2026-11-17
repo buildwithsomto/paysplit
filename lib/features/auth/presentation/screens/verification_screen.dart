@@ -7,6 +7,7 @@ import 'package:paysplit/theme/app_colors.dart';
 import 'package:paysplit/widgets/buttons/app_back_button.dart';
 import 'package:paysplit/widgets/buttons/app_button.dart';
 import 'package:paysplit/widgets/buttons/app_text_link.dart';
+import 'package:paysplit/widgets/feedback/app_notice.dart';
 import 'package:paysplit/widgets/inputs/app_code_field.dart';
 
 class VerificationScreen extends ConsumerStatefulWidget {
@@ -35,15 +36,24 @@ class _VerificationScreenState extends ConsumerState<VerificationScreen> {
     super.dispose();
   }
 
-  void _submit() {
-    final controller = ref.read(authControllerProvider.notifier);
-    if (!controller.verify(_code.text)) return;
+  Future<void> _submit() async {
     FocusManager.instance.primaryFocus?.unfocus();
-    context.go(
-      ref.read(authControllerProvider).purpose == VerificationPurpose.signup
-          ? '/welcome'
-          : '/reset-password',
-    );
+    final recovery =
+        ref.read(authControllerProvider).purpose ==
+        VerificationPurpose.recovery;
+    final verified = await ref
+        .read(authControllerProvider.notifier)
+        .verify(_code.text);
+    if (!mounted || !verified) return;
+    _code.clear();
+    context.go(recovery ? '/reset-password' : '/signup/password');
+  }
+
+  Future<void> _resend() async {
+    final sent = await ref.read(authControllerProvider.notifier).resendCode();
+    if (!mounted || !sent) return;
+    _code.clear();
+    showAppNotice(context, 'We’ve sent a new code to your email.');
   }
 
   @override
@@ -51,6 +61,12 @@ class _VerificationScreenState extends ConsumerState<VerificationScreen> {
     final state = ref.watch(authControllerProvider);
     final controller = ref.read(authControllerProvider.notifier);
     final recovery = state.purpose == VerificationPurpose.recovery;
+    ref.listen(authControllerProvider.select((s) => s.errors['form']), (
+      previous,
+      next,
+    ) {
+      if (next != null) showAppNotice(context, next);
+    });
     return AuthLayout(
       header: Align(
         alignment: Alignment.centerLeft,
@@ -98,16 +114,15 @@ class _VerificationScreenState extends ConsumerState<VerificationScreen> {
               label: state.resendSeconds > 0
                   ? 'Resend in ${state.resendSeconds}s'
                   : 'Click to resend.',
-              onPressed: state.resendSeconds > 0
-                  ? null
-                  : () {
-                      if (!controller.resendCode()) return;
-                      _code.clear();
-                    },
+              onPressed: state.resendSeconds > 0 || state.busy ? null : _resend,
             ),
           ),
           const SizedBox(height: 86),
-          AppButton(label: 'Verify Email', onPressed: _submit),
+          AppButton(
+            label: recovery ? 'Verify Code' : 'Verify Email',
+            busy: state.busy,
+            onPressed: _submit,
+          ),
         ],
       ),
     );

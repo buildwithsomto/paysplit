@@ -43,4 +43,21 @@ abstract final class AppTypography {
     height: 1.5,
     fontWeight: FontWeight.w500,
   );
+
+  /// The centred title of a bottom sheet.
+  static const sheetTitle = TextStyle(
+    fontFamily: 'DM Sans',
+    fontSize: 20,
+    height: 1.4,
+    fontWeight: FontWeight.w600,
+    color: AppColors.heading,
+  );
+
+  /// The line under a bottom sheet's title.
+  static const sheetBody = TextStyle(
+    fontFamily: 'DM Sans',
+    fontSize: 14,
+    height: 20 / 14,
+    color: AppColors.body,
+  );
 }

@@ -1,322 +1,317 @@
-import 'dart:convert';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:paysplit/core/network/api_exception.dart';
+import 'package:paysplit/core/presentation/content_phase.dart';
+import 'package:paysplit/core/session/ledger_version.dart';
+import 'package:paysplit/core/session/session_providers.dart';
+import 'package:paysplit/features/auth/presentation/controllers/account_controller.dart';
 import 'package:paysplit/features/destinations/presentation/controllers/destinations_controller.dart';
-import 'package:paysplit/features/kyc/presentation/controllers/kyc_controller.dart';
+import 'package:paysplit/features/home/presentation/controllers/dashboard_controller.dart';
+import 'package:paysplit/features/rules/data/models/split_rule.dart';
+import 'package:paysplit/features/rules/data/repositories/rules_repository.dart';
 import 'package:paysplit/features/rules/presentation/controllers/rules_controller.dart';
+import 'package:paysplit/features/salary/presentation/controllers/salary_account_controller.dart';
 
-enum SplitOutcome { success, pending, failed, skipped }
-
-enum SplitScenario { successful, mixed, pending }
-
-@immutable
-class SplitLine {
-  const SplitLine({
-    required this.ruleId,
-    required this.name,
-    required this.destination,
-    required this.type,
-    required this.priority,
-    required this.requestedMinor,
-    required this.availableBeforeMinor,
-    required this.outcome,
-    this.actualMinor = 0,
-    this.reason,
-  });
-  final String ruleId, name, destination;
-  final RuleDestinationType type;
-  final int priority, requestedMinor, availableBeforeMinor, actualMinor;
-  final SplitOutcome outcome;
-  final String? reason;
-}
-
-@immutable
-class SplitExecution {
-  SplitExecution({
-    required this.id,
-    required this.at,
-    required this.salaryMinor,
-    required this.availableMinor,
-    required List<SplitLine> lines,
-  }) : lines = List.unmodifiable(lines);
-  final String id;
-  final DateTime at;
-  final int salaryMinor, availableMinor;
-  final List<SplitLine> lines;
-  int total(SplitOutcome status) => lines
-      .where((l) => l.outcome == status)
-      .fold(
-        0,
-        (sum, l) =>
-            sum +
-            (status == SplitOutcome.success ? l.actualMinor : l.requestedMinor),
-      );
-  int allocated(RuleDestinationType type) => lines
-      .where((l) => l.outcome == SplitOutcome.success && l.type == type)
-      .fold(0, (sum, l) => sum + l.actualMinor);
-  int get remainingMinor =>
-      availableMinor -
-      total(SplitOutcome.success) -
-      total(SplitOutcome.pending);
-  String get status => lines.any((l) => l.outcome == SplitOutcome.pending)
-      ? 'Pending confirmation'
-      : lines.every((l) => l.outcome == SplitOutcome.success)
-      ? 'Successful'
-      : lines.any((l) => l.outcome == SplitOutcome.success)
-      ? 'Partially completed'
-      : 'Failed';
-}
+export 'package:paysplit/features/rules/data/models/split_rule.dart'
+    show SplitExecution, SplitLine, SplitOutcome, SplitRunStatus;
 
 @immutable
 class SplitExecutionState {
   const SplitExecutionState({
-    this.sample = false,
-    this.salaryMinor = 0,
-    this.availableMinor = 0,
-    this.scenario = SplitScenario.successful,
-    this.consumed = false,
     this.executions = const [],
+    this.phase = ContentPhase.loading,
+    this.message,
+    this.page = 0,
+    this.hasMore = false,
+    this.loadingMore = false,
+    this.loadMoreError,
+    this.running = false,
     this.error,
+    this.errorCode,
   });
-  final bool sample, consumed;
-  final int salaryMinor, availableMinor;
-  final SplitScenario scenario;
+
+  /// Split history, newest first.
   final List<SplitExecution> executions;
-  final String? error;
+  final ContentPhase phase;
+
+  /// The API's explanation of the last failed history load.
+  final String? message;
+  final int page;
+  final bool hasMore, loadingMore;
+
+  /// Why the last "Load more" brought nothing.
+  final String? loadMoreError;
+
+  /// A Run Now request is in flight.
+  final bool running;
+
+  /// Why the last Run Now did not complete, with the server's code.
+  final String? error, errorCode;
+
+  bool get hasData => page > 0;
+
   SplitExecutionState copyWith({
-    bool? consumed,
     List<SplitExecution>? executions,
+    ContentPhase? phase,
+    String? message,
+    bool clearMessage = false,
+    int? page,
+    bool? hasMore,
+    bool? loadingMore,
+    String? loadMoreError,
+    bool clearLoadMoreError = false,
+    bool? running,
     String? error,
+    String? errorCode,
+    bool clearError = false,
   }) => SplitExecutionState(
-    sample: sample,
-    salaryMinor: salaryMinor,
-    availableMinor: availableMinor,
-    scenario: scenario,
-    consumed: consumed ?? this.consumed,
     executions: List.unmodifiable(executions ?? this.executions),
-    error: error,
+    phase: phase ?? this.phase,
+    message: clearMessage ? null : message ?? this.message,
+    page: page ?? this.page,
+    hasMore: hasMore ?? this.hasMore,
+    loadingMore: loadingMore ?? this.loadingMore,
+    loadMoreError: clearLoadMoreError
+        ? null
+        : loadMoreError ?? this.loadMoreError,
+    running: running ?? this.running,
+    error: clearError ? null : error ?? this.error,
+    errorCode: clearError ? null : errorCode ?? this.errorCode,
   );
 }
 
+/// A reason the split cannot run right now, with a link label and the route
+/// of the screen that resolves it, when there is one.
+typedef SplitBlock = ({String message, (String, String)? action});
+
+/// What Run Now is expected to do, shown before the user confirms.
 @immutable
 class SplitReview {
   const SplitReview({
-    required this.signature,
-    required this.salaryMinor,
     required this.availableMinor,
     required this.lines,
     required this.blocks,
-    required this.sample,
+    this.balanceKnown = true,
   });
-  final String signature;
-  final int salaryMinor, availableMinor;
+
+  /// False when the salary account balance has not loaded, so
+  /// [availableMinor] is a placeholder and there is nothing to estimate.
+  final bool balanceKnown;
+
+  /// The salary account balance the run would share out.
+  final int availableMinor;
+
+  /// One line per active rule, in the order the server runs them.
   final List<SplitLine> lines;
-  final List<String> blocks;
-  final bool sample;
-  bool get canPreview => sample && blocks.isEmpty && lines.isNotEmpty;
+
+  /// Reasons the split cannot run right now.
+  final List<SplitBlock> blocks;
+
+  bool get canRun => blocks.isEmpty && lines.isNotEmpty;
+
+  /// Kobo the estimate allocates.
+  int get allocatedMinor => lines
+      .where((line) => line.outcome != SplitOutcome.skipped)
+      .fold(0, (sum, line) => sum + line.requestedMinor);
 }
 
-List<SplitRule> _active(List<SplitRule> rules) =>
-    rules.where((r) => r.status == RuleStatus.active).toList()..sort(
-      (a, b) => a.priority != b.priority
-          ? a.priority.compareTo(b.priority)
-          : a.order.compareTo(b.order),
-    );
-
-BeneficiaryViewData? _beneficiary(
-  SplitRule rule,
-  DestinationsState destinations,
-) => rule.type == RuleDestinationType.beneficiary
-    ? destinations.beneficiaries
-          .where((b) => b.id == rule.destinationId)
-          .firstOrNull
-    : null;
-
-String _destinationLabel(SplitRule rule, DestinationsState destinations) {
-  final beneficiary = _beneficiary(rule, destinations);
-  return beneficiary == null
-      ? ruleDestinationName(rule, destinations)
-      : '${beneficiary.name} · ${beneficiary.bank} · ${beneficiary.maskedAccount}';
-}
-
-/// Presentation simulation only: percentages use the salary baseline, pending
-/// allocations reserve their full amount, and confirmed failures release it.
-List<SplitLine> simulateSplit(
+/// An estimate of a run over [availableMinor]: rules run by priority,
+/// percentages apply to the balance being split, and a rule that does not
+/// fit is skipped. The server's result is authoritative.
+List<SplitLine> estimateSplit(
   List<SplitRule> rules,
   DestinationsState destinations,
-  int salaryMinor,
-  int availableMinor, {
-  SplitScenario scenario = SplitScenario.successful,
-}) {
-  assert(salaryMinor >= 0 && availableMinor >= 0);
+  int availableMinor,
+) {
+  final active = rules.where((r) => r.status == RuleStatus.active).toList()
+    ..sort(SplitRule.byPriority);
   var remaining = availableMinor;
   final lines = <SplitLine>[];
-  for (final (index, rule) in _active(rules).indexed) {
-    final requested = rule.requestedMinor(salaryMinor);
-    final before = remaining;
-    final outcome = requested > remaining
-        ? SplitOutcome.skipped
-        : scenario == SplitScenario.pending
-        ? SplitOutcome.pending
-        : scenario == SplitScenario.mixed && index == 1
-        ? SplitOutcome.pending
-        : scenario == SplitScenario.mixed && index == 2
-        ? SplitOutcome.failed
-        : SplitOutcome.success;
-    if (outcome == SplitOutcome.success || outcome == SplitOutcome.pending) {
-      remaining -= requested;
-    }
+  for (final rule in active) {
+    final requested = rule.requestedMinor(availableMinor);
+    final skipped = requested > remaining || requested <= 0;
+    if (!skipped) remaining -= requested;
     lines.add(
       SplitLine(
-        ruleId: rule.id,
         name: rule.name,
-        destination: _destinationLabel(rule, destinations),
-        type: rule.type,
+        destination: ruleDestinationName(rule, destinations),
         priority: rule.priority,
         requestedMinor: requested,
-        availableBeforeMinor: before,
-        outcome: outcome,
-        actualMinor: outcome == SplitOutcome.success ? requested : 0,
-        reason: switch (outcome) {
-          SplitOutcome.skipped =>
-            'Insufficient eligible funds. No partial allocation.',
-          SplitOutcome.failed =>
-            'Sample provider rejection. No successful allocation.',
-          SplitOutcome.pending =>
-            'Awaiting sample confirmation. Do not retry an uncertain allocation.',
-          SplitOutcome.success => null,
-        },
+        outcome: skipped ? SplitOutcome.skipped : SplitOutcome.pending,
+        reason: skipped ? SplitLine.insufficientFunds : null,
       ),
     );
   }
   return List.unmodifiable(lines);
 }
 
+/// Run Now and split history, backed by `/split-runs`.
 class SplitExecutionController extends Notifier<SplitExecutionState> {
-  int _sequence = 0;
+  int _generation = 0;
+
+  RulesRepository get _repository => ref.read(rulesRepositoryProvider);
+
   @override
-  SplitExecutionState build() => const SplitExecutionState();
-  void loadSample({
-    int salaryMinor = 85000000,
-    int availableMinor = 40000000,
-    SplitScenario scenario = SplitScenario.mixed,
-  }) {
-    assert(
-      salaryMinor > 0 && availableMinor >= 0 && availableMinor <= salaryMinor,
-    );
-    state = SplitExecutionState(
-      sample: true,
-      salaryMinor: salaryMinor,
-      availableMinor: availableMinor,
-      scenario: scenario,
-      executions: state.executions,
-    );
+  SplitExecutionState build() {
+    final userId = ref.watch(sessionUserIdProvider);
+    final generation = ++_generation;
+    ref.listen(ledgerVersionProvider, (_, _) => load());
+    ref.onDispose(() => _generation++);
+    if (userId == null) {
+      return const SplitExecutionState(phase: ContentPhase.ready);
+    }
+    Future.microtask(() {
+      if (ref.mounted && generation == _generation) load();
+    });
+    return const SplitExecutionState();
   }
 
-  SplitReview review() => buildSplitReview(
-    state,
-    ref.read(rulesControllerProvider),
-    ref.read(destinationsControllerProvider),
-    ref.read(kycControllerProvider).status,
-  );
-  String? confirmPreview(String reviewedSignature) {
-    final latest = review();
-    if (!latest.canPreview || latest.signature != reviewedSignature) {
+  /// First load, pull-to-refresh and Retry of the history.
+  Future<void> load() async {
+    final generation = _generation;
+    state = state.copyWith(
+      phase: state.hasData ? ContentPhase.refreshing : ContentPhase.loading,
+    );
+    try {
+      final result = await _repository.runs(page: 1);
+      if (!ref.mounted || generation != _generation) return;
       state = state.copyWith(
-        error: state.consumed
-            ? 'This sample pay cycle has already been previewed.'
-            : 'The rules or eligibility changed. Review the updated allocations before continuing.',
+        executions: result.items,
+        phase: ContentPhase.ready,
+        clearMessage: true,
+        page: 1,
+        hasMore: result.hasNextPage,
+        clearLoadMoreError: true,
       );
+    } on Object catch (error) {
+      if (!ref.mounted || generation != _generation) return;
+      state = state.copyWith(
+        phase: ContentPhase.failure(error),
+        message: describeError(error),
+      );
+    }
+  }
+
+  Future<void> loadMore() async {
+    if (!state.hasMore || state.loadingMore || !state.hasData) return;
+    final generation = _generation;
+    state = state.copyWith(loadingMore: true, clearLoadMoreError: true);
+    try {
+      final result = await _repository.runs(page: state.page + 1);
+      if (!ref.mounted || generation != _generation) return;
+      final known = {for (final run in state.executions) run.id};
+      state = state.copyWith(
+        executions: [
+          ...state.executions,
+          ...result.items.where((run) => !known.contains(run.id)),
+        ],
+        page: result.page,
+        hasMore: result.hasNextPage,
+        loadingMore: false,
+      );
+    } on Object catch (error) {
+      if (!ref.mounted || generation != _generation) return;
+      state = state.copyWith(
+        loadingMore: false,
+        loadMoreError: describeError(error),
+      );
+    }
+  }
+
+  /// Forgets why the last Run Now did not complete, when the screen reopens.
+  void clearError() {
+    if (state.error != null) state = state.copyWith(clearError: true);
+  }
+
+  /// Runs the split. Returns the run's id, or null when it did not complete;
+  /// [SplitExecutionState.error] then says why. A request whose answer never
+  /// arrived is never sent again: history is reloaded so the user can see
+  /// whether it went through.
+  Future<String?> runNow() async {
+    if (state.running) return null;
+    final generation = _generation;
+    state = state.copyWith(running: true, clearError: true);
+    try {
+      final run = await _repository.run();
+      if (!ref.mounted || generation != _generation) return run.id;
+      state = state.copyWith(
+        running: false,
+        executions: [run, ...state.executions.where((r) => r.id != run.id)],
+      );
+      ref.read(ledgerVersionProvider.notifier).moved();
+      return run.id;
+    } on Object catch (error) {
+      if (!ref.mounted || generation != _generation) return null;
+      state = state.copyWith(
+        running: false,
+        error: describeError(error),
+        errorCode: error is ApiException ? error.code : null,
+      );
+      // The split may have run: reload so the user can see whether it did.
+      if (error is ApiException && error.isConnectivity) {
+        ref.read(ledgerVersionProvider.notifier).moved();
+      }
       return null;
     }
-    final execution = SplitExecution(
-      id: 'SAMPLE-RUN-${++_sequence}',
-      at: DateTime.now(),
-      salaryMinor: state.salaryMinor,
-      availableMinor: state.availableMinor,
-      lines: simulateSplit(
-        ref.read(rulesControllerProvider),
-        ref.read(destinationsControllerProvider),
-        state.salaryMinor,
-        state.availableMinor,
-        scenario: state.scenario,
-      ),
-    );
-    state = state.copyWith(
-      consumed: true,
-      executions: [execution, ...state.executions],
-    );
-    return execution.id;
   }
-}
-
-SplitReview buildSplitReview(
-  SplitExecutionState state,
-  List<SplitRule> rules,
-  DestinationsState destinations,
-  KycStatus status,
-) {
-  final active = _active(rules);
-  final blocks = <String>[
-    if (status != KycStatus.approved)
-      'Identity verification must be approved before a financial split can run.',
-    if (active.isEmpty)
-      'There are no active rules. Review and activate a rule first.',
-    if (!state.sample)
-      'No confirmed salary funds or payment permissions are connected. Real execution is unavailable.',
-    if (state.sample && state.availableMinor == 0)
-      'There are no eligible, unallocated sample funds.',
-    if (state.consumed)
-      'This sample pay cycle was already previewed. Its funds cannot be allocated a second time.',
-  ];
-  // Structured equality token, kept in memory only. Includes the full payment
-  // target so edits with identical names or last four digits invalidate review.
-  final signature = jsonEncode([
-    state.sample,
-    state.salaryMinor,
-    state.availableMinor,
-    state.scenario.name,
-    state.consumed,
-    status.name,
-    for (final rule in active)
-      [
-        rule.id,
-        rule.name,
-        rule.units,
-        rule.method.name,
-        rule.priority,
-        rule.order,
-        rule.type.name,
-        rule.destinationId,
-        _destinationLabel(rule, destinations),
-        _beneficiary(rule, destinations)?.accountNumber,
-      ],
-  ]);
-  return SplitReview(
-    signature: signature,
-    salaryMinor: state.salaryMinor,
-    availableMinor: state.availableMinor,
-    sample: state.sample,
-    blocks: List.unmodifiable(blocks),
-    lines: simulateSplit(
-      active,
-      destinations,
-      state.salaryMinor,
-      state.availableMinor,
-    ),
-  );
 }
 
 final splitExecutionProvider =
     NotifierProvider<SplitExecutionController, SplitExecutionState>(
       SplitExecutionController.new,
     );
-final splitReviewProvider = Provider<SplitReview>(
-  (ref) => buildSplitReview(
-    ref.watch(splitExecutionProvider),
-    ref.watch(rulesControllerProvider),
-    ref.watch(destinationsControllerProvider),
-    ref.watch(kycControllerProvider).status,
-  ),
-);
+
+/// One run with its lines; the list only carries summaries.
+final splitRunDetailProvider = FutureProvider.autoDispose
+    .family<SplitExecution, String>(
+      (ref, id) => ref.watch(rulesRepositoryProvider).runDetail(id),
+    );
+
+final splitReviewProvider = Provider<SplitReview>((ref) {
+  final rules = ref.watch(rulesControllerProvider);
+  final destinations = ref.watch(destinationsControllerProvider);
+  final onboarding = ref.watch(onboardingProvider);
+  // The dashboard carries the same account, so a balance is still known
+  // when the account screen's own request has not gone through.
+  final account =
+      ref.watch(salaryAccountProvider).account ??
+      ref.watch(
+        dashboardControllerProvider.select((s) => s.summary?.salaryAccount),
+      );
+  final available = account?.balance ?? 0;
+  final active = rules.where((r) => r.status == RuleStatus.active);
+  const accountDetails = ('View Account Details', '/salary-account');
+  return SplitReview(
+    availableMinor: available,
+    balanceKnown: account != null,
+    // An unknown balance is not an empty one: no estimate is made from it.
+    lines: account == null
+        ? const []
+        : estimateSplit(rules, destinations, available),
+    blocks: List.unmodifiable(<SplitBlock>[
+      if (account == null)
+        (
+          message:
+              'Your salary account balance couldn’t be loaded. Check your connection and try again.',
+          action: accountDetails,
+        ),
+      if (!onboarding.kycApproved)
+        (
+          message: 'Verify your identity before running a split.',
+          action: ('Complete verification', '/kyc/result'),
+        ),
+      if (onboarding.kycApproved && account != null && !account.isActive)
+        (
+          message: 'Your salary account isn’t active yet.',
+          action: accountDetails,
+        ),
+      if (active.isEmpty)
+        (message: 'You have no active split rules.', action: null),
+      if (active.isNotEmpty && account != null && available <= 0)
+        (
+          message: 'There’s no money in your salary account to split.',
+          action: accountDetails,
+        ),
+    ]),
+  );
+});

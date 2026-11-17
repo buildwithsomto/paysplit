@@ -5,10 +5,11 @@ import 'package:paysplit/features/auth/presentation/controllers/auth_controller.
 import 'package:paysplit/features/auth/presentation/widgets/auth_layout.dart';
 import 'package:paysplit/widgets/buttons/app_back_button.dart';
 import 'package:paysplit/widgets/buttons/app_button.dart';
+import 'package:paysplit/widgets/feedback/app_notice.dart';
 import 'package:paysplit/widgets/inputs/app_input_field.dart';
 
-/// Signup uses the same password form because the brief requires a password
-/// although the supplied signup frame only shows name and email fields.
+/// One form for both password steps: creating it after the signup email is
+/// verified, and choosing a new one after a reset code is verified.
 class PasswordScreen extends ConsumerStatefulWidget {
   const PasswordScreen({this.creating = false, super.key});
   final bool creating;
@@ -26,19 +27,22 @@ class _PasswordScreenState extends ConsumerState<PasswordScreen> {
     super.dispose();
   }
 
-  void _submit() {
-    final controller = ref.read(authControllerProvider.notifier);
-    if (!controller.validatePasswords(_password.text, _confirmation.text)) {
-      return;
-    }
+  Future<void> _submit() async {
     FocusManager.instance.primaryFocus?.unfocus();
+    final controller = ref.read(authControllerProvider.notifier);
+    final saved = await (widget.creating
+        ? controller.createPassword(_password.text, _confirmation.text)
+        : controller.resetPassword(_password.text, _confirmation.text));
+    if (!mounted || !saved) return;
     _password.clear();
     _confirmation.clear();
     if (widget.creating) {
-      controller.startVerification();
-      context.go('/verify');
+      context.go('/welcome');
     } else {
-      controller.clearErrors();
+      showAppNotice(
+        context,
+        'Password updated. Log in with your new password.',
+      );
       context.go('/login');
     }
   }
@@ -47,6 +51,12 @@ class _PasswordScreenState extends ConsumerState<PasswordScreen> {
   Widget build(BuildContext context) {
     final state = ref.watch(authControllerProvider);
     final controller = ref.read(authControllerProvider.notifier);
+    ref.listen(authControllerProvider.select((s) => s.errors['form']), (
+      previous,
+      next,
+    ) {
+      if (next != null) showAppNotice(context, next);
+    });
     return AuthLayout(
       header: Align(
         alignment: Alignment.centerLeft,
@@ -66,7 +76,7 @@ class _PasswordScreenState extends ConsumerState<PasswordScreen> {
       title: widget.creating ? 'Create Password' : 'Reset Password',
       description: Text(
         widget.creating
-            ? 'Create a password with at least 8 characters'
+            ? 'Use 8+ characters with upper and lower case, a number and a symbol'
             : 'Kindly enter your new password',
       ),
       child: AutofillGroup(
@@ -95,7 +105,7 @@ class _PasswordScreenState extends ConsumerState<PasswordScreen> {
               onSubmitted: (_) => _submit(),
             ),
             const SizedBox(height: 40),
-            AppButton(label: 'Continue', onPressed: _submit),
+            AppButton(label: 'Continue', busy: state.busy, onPressed: _submit),
           ],
         ),
       ),

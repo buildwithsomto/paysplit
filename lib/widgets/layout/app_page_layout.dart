@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:paysplit/theme/app_theme.dart';
 import 'package:paysplit/theme/app_typography.dart';
 import 'package:paysplit/widgets/buttons/app_back_button.dart';
+import 'package:paysplit/widgets/layout/bottom_action_bar.dart';
 
 /// Standard standalone page shell with a scrollable body and safe bottom action.
 class AppPageLayout extends StatelessWidget {
@@ -14,7 +15,6 @@ class AppPageLayout extends StatelessWidget {
     this.bodyGap = 19,
     this.headerTop = 22,
     this.trailing,
-    this.backgroundColor,
     super.key,
   });
   final String title;
@@ -24,13 +24,11 @@ class AppPageLayout extends StatelessWidget {
   final double bodyGap;
   final double headerTop;
   final Widget? trailing;
-  final Color? backgroundColor;
 
   @override
   Widget build(BuildContext context) => AnnotatedRegion<SystemUiOverlayStyle>(
     value: AppTheme.systemOverlay,
     child: Scaffold(
-      backgroundColor: backgroundColor,
       body: SafeArea(
         child: Align(
           alignment: Alignment.topCenter,
@@ -51,7 +49,13 @@ class AppPageLayout extends StatelessWidget {
                       Expanded(
                         child: Padding(
                           padding: const EdgeInsets.only(top: 8),
-                          child: Text(title, style: AppTypography.heading),
+                          child: Text(
+                            title,
+                            // A wallet or beneficiary name can be the title.
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppTypography.heading,
+                          ),
                         ),
                       ),
                       ?trailing,
@@ -65,12 +69,10 @@ class AppPageLayout extends StatelessWidget {
           ),
         ),
       ),
-      bottomNavigationBar: bottom == null
-          ? null
-          : SafeArea(
-              minimum: const EdgeInsets.fromLTRB(16, 18, 16, 36),
-              child: bottom!,
-            ),
+      bottomNavigationBar: switch (bottom) {
+        final bottom? => BottomActionBar(child: bottom),
+        null => null,
+      },
     ),
   );
 }

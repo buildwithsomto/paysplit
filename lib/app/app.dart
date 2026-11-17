@@ -13,5 +13,12 @@ class PaySplitApp extends ConsumerWidget {
     debugShowCheckedModeBanner: false,
     theme: AppTheme.light,
     routerConfig: ref.watch(appRouterProvider),
+    // A tap that no control claims closes the keyboard. The number pad has no
+    // "done" key, so this is the only way to dismiss it without scrolling.
+    builder: (context, child) => GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+      child: child,
+    ),
   );
 }

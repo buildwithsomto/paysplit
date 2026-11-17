@@ -10,7 +10,7 @@ class WalletSummaryCard extends StatelessWidget {
     required this.onOpen,
     super.key,
   });
-  final WalletViewData wallet;
+  final Wallet wallet;
   final VoidCallback onOpen;
 
   @override
@@ -27,15 +27,7 @@ class WalletSummaryCard extends StatelessWidget {
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [
-              switch (wallet.accent) {
-                WalletAccent.green => const Color(0xFFEAFFED),
-                WalletAccent.blue => const Color(0xFFEAF6FF),
-                WalletAccent.orange => const Color(0xFFFFEDE8),
-                WalletAccent.purple => const Color(0xFFF0E5FF),
-              },
-              Colors.white,
-            ],
+            colors: [wallet.accent.tint, Colors.white],
             stops: const [.13942, 1],
           ),
         ),
@@ -55,7 +47,7 @@ class WalletSummaryCard extends StatelessWidget {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: AppSvgIcon(
-                    wallet.category == 'Travel'
+                    wallet.categorySlug == 'vacation'
                         ? 'assets/icons/destinations/f1fad.svg'
                         : 'assets/icons/destinations/f93f3.svg',
                   ),
@@ -66,6 +58,8 @@ class WalletSummaryCard extends StatelessWidget {
                     children: [
                       Text(
                         wallet.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w500,
@@ -76,6 +70,8 @@ class WalletSummaryCard extends StatelessWidget {
                       const SizedBox(height: 4),
                       Text(
                         wallet.category,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontSize: 12,
                           color: Color(0xFF696969),
@@ -122,11 +118,10 @@ class WalletSummaryCard extends StatelessWidget {
             const SizedBox(height: 8),
             Row(
               spacing: 8,
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
                   child: Text(
-                    DateFormat('MMM d, y').format(wallet.createdAt),
+                    'Created: ${DateFormat('MMM d y').format(wallet.createdAt)}',
                     style: const TextStyle(
                       fontFamily: 'Switzer',
                       fontSize: 14,
@@ -135,11 +130,9 @@ class WalletSummaryCard extends StatelessWidget {
                     ),
                   ),
                 ),
-                const Flexible(
-                  child: Text(
-                    'View wallet',
-                    style: TextStyle(fontSize: 12, height: 1.4),
-                  ),
+                const Text(
+                  'View wallet',
+                  style: TextStyle(fontSize: 12, height: 1.4),
                 ),
                 const AppSvgIcon(
                   'assets/icons/destinations/f00e6.svg',
@@ -157,11 +150,12 @@ class WalletSummaryCard extends StatelessWidget {
 
 class WalletTargetProgress extends StatelessWidget {
   const WalletTargetProgress({required this.wallet, super.key});
-  final WalletViewData wallet;
+  final Wallet wallet;
   @override
   Widget build(BuildContext context) {
     final target = wallet.targetMinor;
-    if (target == null) {
+    final ratio = wallet.progress;
+    if (target == null || ratio == null) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 8),
         child: Text(
@@ -170,7 +164,6 @@ class WalletTargetProgress extends StatelessWidget {
         ),
       );
     }
-    final ratio = (wallet.balanceMinor / target).clamp(0.0, 1.0);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [

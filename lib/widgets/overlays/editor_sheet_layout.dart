@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:paysplit/theme/app_typography.dart';
 import 'package:paysplit/widgets/app_svg_icon.dart';
 
 /// Shared Figma bottom-sheet shell. Fields scroll above the keyboard and actions.
@@ -27,7 +28,7 @@ class EditorSheetLayout extends StatelessWidget {
       height: height,
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final header = _SheetHeader(
+          final header = EditorSheetHeader(
             title: title,
             subtitle: subtitle,
             onClose: onClose,
@@ -41,16 +42,19 @@ class EditorSheetLayout extends StatelessWidget {
             ),
             child: child,
           );
-          final actions = SafeArea(
-            top: false,
-            minimum: EdgeInsets.fromLTRB(
-              16,
-              12,
-              16,
-              constraints.maxHeight < height ? 24 : bottomPadding,
+          final actions = switch (bottom) {
+            final bottom? => SafeArea(
+              top: false,
+              minimum: EdgeInsets.fromLTRB(
+                16,
+                12,
+                16,
+                constraints.maxHeight < height ? 24 : bottomPadding,
+              ),
+              child: bottom,
             ),
-            child: bottom ?? const SizedBox.shrink(),
-          );
+            null => null,
+          };
           // On compact keyboard layouts, all content scrolls so neither the title
           // nor a large-text action row consumes the field viewport completely.
           if (constraints.maxHeight < 400) {
@@ -58,7 +62,7 @@ class EditorSheetLayout extends StatelessWidget {
               keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [header, fields, if (bottom != null) actions],
+                children: [header, fields, ?actions],
               ),
             );
           }
@@ -73,7 +77,7 @@ class EditorSheetLayout extends StatelessWidget {
                   child: fields,
                 ),
               ),
-              if (bottom != null) actions,
+              ?actions,
             ],
           );
         },
@@ -82,11 +86,14 @@ class EditorSheetLayout extends StatelessWidget {
   );
 }
 
-class _SheetHeader extends StatelessWidget {
-  const _SheetHeader({
+/// The patterned sheet header from the design: centred title, optional
+/// subtitle and the round close button.
+class EditorSheetHeader extends StatelessWidget {
+  const EditorSheetHeader({
     required this.title,
     required this.onClose,
     this.subtitle,
+    super.key,
   });
   final String title;
   final VoidCallback onClose;
@@ -163,30 +170,17 @@ class _SheetHeader extends StatelessWidget {
               Text(
                 title,
                 textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontFamily: 'DM Sans',
-                  fontSize: 20,
-                  height: 1.4,
-                  fontWeight: FontWeight.w600,
-                  color: Color(0xFF101828),
-                ),
+                style: AppTypography.sheetTitle,
               ),
-              if (subtitle != null) ...[
-                const SizedBox.shrink(),
+              if (subtitle case final subtitle?)
                 ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 260),
                   child: Text(
-                    subtitle!,
+                    subtitle,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      fontFamily: 'DM Sans',
-                      fontSize: 14,
-                      height: 20 / 14,
-                      color: Color(0xFF475467),
-                    ),
+                    style: AppTypography.sheetBody,
                   ),
                 ),
-              ],
             ],
           ),
         ),

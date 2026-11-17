@@ -1,224 +1,295 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:paysplit/core/formatting/money.dart';
+import 'package:paysplit/core/network/api_exception.dart';
+import 'package:paysplit/core/presentation/content_phase.dart';
+import 'package:paysplit/core/session/ledger_version.dart';
+import 'package:paysplit/core/session/session_providers.dart';
+import 'package:paysplit/features/auth/presentation/controllers/account_controller.dart';
 import 'package:paysplit/features/destinations/presentation/controllers/destinations_controller.dart';
-import 'package:paysplit/features/kyc/presentation/controllers/kyc_controller.dart';
+import 'package:paysplit/features/home/presentation/controllers/dashboard_controller.dart';
+import 'package:paysplit/features/rules/data/models/split_rule.dart';
+import 'package:paysplit/features/rules/data/repositories/rules_repository.dart';
 
-enum RuleDestinationType { wallet, beneficiary }
+export 'package:paysplit/features/rules/data/models/split_rule.dart'
+    show
+        AllocationMethod,
+        AllocationSegment,
+        RuleDestinationType,
+        RuleInput,
+        RuleStatus,
+        RulesSummary,
+        SplitRule;
 
-enum AllocationMethod { fixed, percentage }
-
-enum RuleStatus { draft, active, paused }
-
+/// How the rule list currently stands with the API.
 @immutable
-class RuleInput {
-  const RuleInput({
-    required this.name,
-    required this.type,
-    required this.destinationId,
-    required this.method,
-    required this.value,
-    required this.priority,
+class RulesStatus {
+  const RulesStatus({
+    this.phase = ContentPhase.loading,
+    this.message,
+    this.updatedAt,
+    this.summary,
   });
-  final String name;
-  final RuleDestinationType type;
-  final String? destinationId;
-  final AllocationMethod method;
-  final String value;
-  final int priority;
-  // Money.parse is also an exact two-decimal parser for percentage basis points.
-  int? get units =>
-      method == AllocationMethod.percentage &&
-          !RegExp(r'^\d{1,3}(?:\.\d{1,2})?$').hasMatch(value.trim())
-      ? null
-      : Money.parse(value);
+  final ContentPhase phase;
+
+  /// The API's explanation of the last failed load.
+  final String? message;
+
+  /// Null until the first successful load.
+  final DateTime? updatedAt;
+  final RulesSummary? summary;
+
+  bool get hasData => updatedAt != null;
 }
 
-@immutable
-class SplitRule {
-  const SplitRule({
-    required this.id,
-    required this.name,
-    required this.type,
-    required this.destinationId,
-    required this.method,
-    required this.units,
-    required this.priority,
-    required this.status,
-    required this.createdAt,
-    required this.updatedAt,
-    required this.order,
-  });
-  final String id;
-  final String name;
-  final RuleDestinationType type;
-  final String destinationId;
-  final AllocationMethod method;
-
-  /// Kobo for fixed rules; basis points for percentage rules (10000 = 100%).
-  final int units;
-  final int priority;
-  final RuleStatus status;
-  final DateTime createdAt;
-  final DateTime updatedAt;
-  final int order;
-  String get allocationLabel => method == AllocationMethod.fixed
-      ? Money.format(units)
-      : '${units ~/ 100}${units % 100 == 0 ? '' : '.${(units % 100).toString().padLeft(2, '0')}'}%';
-  RuleInput get input => RuleInput(
-    name: name,
-    type: type,
-    destinationId: destinationId,
-    method: method,
-    value: '${units ~/ 100}.${(units % 100).toString().padLeft(2, '0')}',
-    priority: priority,
-  );
-  int requestedMinor(int originalSalaryMinor) =>
-      method == AllocationMethod.fixed
-      ? units
-      : (originalSalaryMinor * units) ~/ 10000;
+class RulesStatusController extends Notifier<RulesStatus> {
+  @override
+  RulesStatus build() => const RulesStatus();
+  void set(RulesStatus status) => state = status;
 }
 
-/// Local configuration only. No funds are reserved, transferred or executed here.
+final rulesStatusProvider =
+    NotifierProvider<RulesStatusController, RulesStatus>(
+      RulesStatusController.new,
+    );
+
+/// The user's split rules in priority order, backed by `/split-rules`.
+/// Writes throw [ApiException] so the form can place the server's answer.
 class RulesController extends Notifier<List<SplitRule>> {
-  int _sequence = 0;
+  int _generation = 0;
+  Future<void>? _loading;
+
+  RulesRepository get _repository => ref.read(rulesRepositoryProvider);
+
+  void _status(RulesStatus status) =>
+      ref.read(rulesStatusProvider.notifier).set(status);
+
   @override
   List<SplitRule> build() {
+    final userId = ref.watch(sessionUserIdProvider);
+    final generation = ++_generation;
+    ref.listen(ledgerVersionProvider, (_, _) => load());
+    _loading = null;
+    ref.onDispose(() => _generation++);
+    // Deleting a wallet or beneficiary deletes its rule on the server too,
+    // so the rules are read again when one of their destinations goes.
     ref.listen(destinationsControllerProvider, (previous, next) {
-      final ids = {
+      if (previous == null || !previous.hasData || !next.hasData) return;
+      final remaining = {
         ...next.wallets.map((w) => w.id),
         ...next.beneficiaries.map((b) => b.id),
       };
-      state = List.unmodifiable(
-        state.where((rule) => ids.contains(rule.destinationId)),
+      final gone = {
+        ...previous.wallets.map((w) => w.id),
+        ...previous.beneficiaries.map((b) => b.id),
+      }.difference(remaining);
+      if (state.any((rule) => gone.contains(rule.destinationId))) _reload();
+    });
+    Future.microtask(() {
+      if (!ref.mounted || generation != _generation) return;
+      _status(
+        RulesStatus(
+          phase: userId == null ? ContentPhase.ready : ContentPhase.loading,
+        ),
       );
+      if (userId != null) load();
     });
     return const [];
   }
 
-  SplitRule? forDestination(String id) =>
-      state.where((rule) => rule.destinationId == id).firstOrNull;
-  String? get activationBlock =>
-      ref.read(kycControllerProvider).status == KycStatus.approved
-      ? null
-      : 'Complete identity verification before activating a rule. You can save a draft now.';
+  /// First load, pull-to-refresh and Retry. Concurrent callers share one run.
+  Future<void> load() =>
+      _loading ??= _load().whenComplete(() => _loading = null);
 
-  Map<String, String> validate(RuleInput input, {String? id}) {
-    final errors = <String, String>{};
-    if (input.name.trim().isEmpty) errors['name'] = 'Enter a rule name.';
-    if (input.name.trim().length > 60) {
-      errors['name'] = 'Use at most 60 characters.';
-    }
-    if (input.priority < 1 || input.priority > 10) {
-      errors['priority'] = 'Choose a priority from 1 to 10.';
-    }
-    final destinations = ref.read(destinationsControllerProvider);
-    final exists = input.type == RuleDestinationType.wallet
-        ? destinations.wallets.any((w) => w.id == input.destinationId)
-        : destinations.beneficiaries.any((b) => b.id == input.destinationId);
-    if (!exists) errors['destination'] = 'Select a saved destination.';
-    if (state.any(
-      (rule) => rule.id != id && rule.destinationId == input.destinationId,
-    )) {
-      errors['destination'] =
-          'This destination already has a rule. Reconfigure its existing rule.';
-    }
-    final units = input.units;
-    if (units == null ||
-        units <= 0 ||
-        (input.method == AllocationMethod.percentage && units > 10000)) {
-      errors['value'] = input.method == AllocationMethod.percentage
-          ? 'Enter a percentage above 0 and no more than 100, with at most two decimals.'
-          : 'Enter an amount greater than zero, with at most two decimals.';
-    }
-    return Map.unmodifiable(errors);
+  /// Reads the rules and their summary again after something changed them.
+  /// A load already in flight may have been answered before the change, so
+  /// it is left to finish and a new one follows it.
+  Future<void> _reload() async {
+    await _loading;
+    if (ref.mounted) await load();
   }
 
-  SplitRule? save(
-    RuleInput input, {
-    String? id,
-    RuleStatus status = RuleStatus.draft,
-  }) {
-    if (validate(input, id: id).isNotEmpty ||
-        (status == RuleStatus.active && activationBlock != null)) {
-      return null;
-    }
-    final old = state.where((rule) => rule.id == id).firstOrNull;
-    final now = DateTime.now();
-    final order = old?.order ?? ++_sequence;
-    final rule = SplitRule(
-      id: old?.id ?? 'rule-$order',
-      name: input.name.trim(),
-      type: input.type,
-      destinationId: input.destinationId!,
-      method: input.method,
-      units: input.units!,
-      priority: input.priority,
-      status: status,
-      createdAt: old?.createdAt ?? now,
-      updatedAt: now,
-      order: order,
+  Future<void> _load() async {
+    if (ref.read(sessionUserIdProvider) == null) return;
+    final generation = _generation;
+    final before = ref.read(rulesStatusProvider);
+    _status(
+      RulesStatus(
+        phase: before.hasData ? ContentPhase.refreshing : ContentPhase.loading,
+        updatedAt: before.updatedAt,
+        summary: before.summary,
+      ),
     );
-    final rules = [...state.where((r) => r.id != rule.id), rule]
-      ..sort(
-        (a, b) => a.priority != b.priority
-            ? a.priority.compareTo(b.priority)
-            : a.order.compareTo(b.order),
+    try {
+      final (rules, summary) = await (
+        _repository.rules(),
+        _repository.summary(),
+      ).wait;
+      if (!ref.mounted || generation != _generation) return;
+      state = List.unmodifiable(rules);
+      _status(
+        RulesStatus(
+          phase: ContentPhase.ready,
+          updatedAt: DateTime.now(),
+          summary: summary,
+        ),
       );
-    state = List.unmodifiable(rules);
+    } on Object catch (error) {
+      if (!ref.mounted || generation != _generation) return;
+      final cause = failureCause(error);
+      // Keep the last loaded rules on screen; only the status changes.
+      _status(
+        RulesStatus(
+          phase: ContentPhase.failure(cause),
+          message: describeError(cause),
+          updatedAt: before.updatedAt,
+          summary: before.summary,
+        ),
+      );
+    }
+  }
+
+  /// Checks the rule form before anything is sent. Returns the rule to
+  /// send, or the reasons it cannot be sent, keyed by form field. [id] is
+  /// the rule being edited, if any.
+  ({RuleInput? input, Map<String, String> errors}) check({
+    required String name,
+    required RuleDestinationType type,
+    required String? destinationId,
+    required AllocationMethod method,
+    required String value,
+    required int priority,
+    String? id,
+  }) {
+    final errors = <String, String>{};
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) errors['name'] = 'Enter a rule name.';
+    if (trimmed.length > 80) errors['name'] = 'Use at most 80 characters.';
+    if (priority < 1 || priority > 100) {
+      errors['priority'] = 'Choose a priority from 1 to 100.';
+    }
+    final destinations = ref.read(destinationsControllerProvider);
+    final exists = type == RuleDestinationType.wallet
+        ? destinations.wallets.any((w) => w.id == destinationId)
+        : destinations.beneficiaries.any((b) => b.id == destinationId);
+    if (!exists) errors['destination'] = 'Select a saved destination.';
+    if (state.any(
+      (rule) => rule.id != id && rule.destinationId == destinationId,
+    )) {
+      errors['destination'] =
+          'This destination already has a rule. Edit that rule instead.';
+    }
+    final units = method.parse(value);
+    if (units == null ||
+        units <= 0 ||
+        (method == AllocationMethod.percentage && units > 10000)) {
+      errors['value'] = method == AllocationMethod.percentage
+          ? 'Enter a percentage above 0 and up to 100, with at most two decimals.'
+          : 'Enter an amount greater than zero.';
+    }
+    if (errors.isNotEmpty || destinationId == null || units == null) {
+      return (input: null, errors: Map.unmodifiable(errors));
+    }
+    return (
+      input: RuleInput(
+        name: trimmed,
+        type: type,
+        destinationId: destinationId,
+        method: method,
+        units: units,
+        priority: priority,
+      ),
+      errors: const {},
+    );
+  }
+
+  /// Puts a server answer on the form field it is about.
+  static Map<String, String> placeError(Object error) {
+    final message = describeError(error);
+    if (error is! ApiException) return {'form': message};
+    return switch (error.code) {
+      'KYC_REQUIRED' => {'kyc': message},
+      'DESTINATION_HAS_RULE' ||
+      'DESTINATION_NOT_FOUND' => {'destination': message},
+      'ALLOCATION_EXCEEDS_SALARY' || 'INVALID_RULE_VALUE' => {'value': message},
+      _ when error.fieldError('name') != null => {
+        'name': 'Check the rule name and try again.',
+      },
+      _ when error.fieldError('priority') != null => {
+        'priority': 'Choose a priority from 1 to 100.',
+      },
+      _ when error.fieldError('value') != null => {
+        'value': 'Enter a valid amount.',
+      },
+      _ => {'form': message},
+    };
+  }
+
+  /// Creates the rule, or updates it when [id] is given.
+  Future<SplitRule> save(RuleInput input, {String? id}) async {
+    final generation = _generation;
+    final SplitRule rule;
+    if (id == null) {
+      final created = await _repository.create(input);
+      rule = created.rule;
+      if (ref.mounted && generation == _generation) {
+        ref
+            .read(accountControllerProvider.notifier)
+            .apply(onboarding: created.onboarding);
+      }
+    } else {
+      rule = await _repository.update(id, input);
+    }
+    if (ref.mounted && generation == _generation) {
+      _adopt(rule);
+      _changed();
+    }
     return rule;
   }
 
-  void pause(String id) {
-    final rule = state.where((r) => r.id == id).firstOrNull;
-    if (rule?.status == RuleStatus.active) {
-      save(rule!.input, id: id, status: RuleStatus.paused);
+  Future<SplitRule> setPaused(String id, bool paused) async {
+    final rule = await _repository.setStatus(
+      id,
+      paused ? RuleStatus.paused : RuleStatus.active,
+    );
+    if (ref.mounted) {
+      _adopt(rule);
+      _changed();
     }
+    return rule;
   }
 
-  void delete(String id) =>
-      state = List.unmodifiable(state.where((rule) => rule.id != id));
+  Future<void> delete(String id) async {
+    final generation = _generation;
+    await _repository.delete(id);
+    if (!ref.mounted || generation != _generation) return;
+    state = List.unmodifiable(state.where((rule) => rule.id != id));
+    ref.read(accountControllerProvider.notifier).load();
+    _changed();
+  }
+
+  /// Shows a saved [rule] at once, in its place in the running order.
+  void _adopt(SplitRule rule) {
+    state = List.unmodifiable(
+      <SplitRule>[...state.where((r) => r.id != rule.id), rule]
+        ..sort(SplitRule.byPriority),
+    );
+  }
+
+  /// Totals here and elsewhere depend on the rules: read them again.
+  void _changed() {
+    ref.read(dashboardControllerProvider.notifier).load();
+    ref.read(destinationsControllerProvider.notifier).load();
+    _reload();
+  }
 }
 
 final rulesControllerProvider =
     NotifierProvider<RulesController, List<SplitRule>>(RulesController.new);
 
+/// The destination's current name. The loaded wallet or beneficiary is
+/// asked first, since it may have been renamed since the rule was read.
 String ruleDestinationName(SplitRule rule, DestinationsState destinations) =>
-    rule.type == RuleDestinationType.wallet
-    ? destinations.wallets
-              .where((w) => w.id == rule.destinationId)
-              .firstOrNull
-              ?.name ??
-          'Removed wallet'
-    : destinations.beneficiaries
-              .where((b) => b.id == rule.destinationId)
-              .firstOrNull
-              ?.name ??
-          'Removed beneficiary';
-
-/// A non-executing estimate. Each percentage uses the ORIGINAL salary. Rules
-/// that cannot be covered in full are skipped, leaving funds for later rules.
-List<({SplitRule rule, int amountMinor, bool skipped})> previewAllocations(
-  List<SplitRule> rules,
-  int salaryMinor,
-) {
-  var remaining = salaryMinor;
-  final ordered = rules.where((r) => r.status == RuleStatus.active).toList()
-    ..sort(
-      (a, b) => a.priority != b.priority
-          ? a.priority.compareTo(b.priority)
-          : a.order.compareTo(b.order),
-    );
-  final result = <({SplitRule rule, int amountMinor, bool skipped})>[];
-  for (final rule in ordered) {
-    final amount = rule.requestedMinor(salaryMinor);
-    final skipped = amount > remaining;
-    if (!skipped) remaining -= amount;
-    result.add((
-      rule: rule,
-      amountMinor: skipped ? 0 : amount,
-      skipped: skipped,
-    ));
-  }
-  return List.unmodifiable(result);
-}
+    (rule.type == RuleDestinationType.wallet
+        ? destinations.wallet(rule.destinationId)?.name
+        : destinations.beneficiary(rule.destinationId)?.name) ??
+    rule.destinationName;

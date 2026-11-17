@@ -10,12 +10,14 @@ class RuleEditorState {
     this.method = AllocationMethod.fixed,
     this.priority = 10,
     this.errors = const {},
+    this.busy = false,
   });
   final RuleDestinationType type;
   final String? destinationId;
   final AllocationMethod method;
   final int priority;
   final Map<String, String> errors;
+  final bool busy;
   RuleEditorState copyWith({
     RuleDestinationType? type,
     String? destinationId,
@@ -23,6 +25,7 @@ class RuleEditorState {
     AllocationMethod? method,
     int? priority,
     Map<String, String>? errors,
+    bool? busy,
   }) => RuleEditorState(
     type: type ?? this.type,
     destinationId: clearDestination
@@ -31,6 +34,7 @@ class RuleEditorState {
     method: method ?? this.method,
     priority: priority ?? this.priority,
     errors: Map.unmodifiable(errors ?? this.errors),
+    busy: busy ?? this.busy,
   );
 }
 
@@ -67,20 +71,42 @@ class RuleEditorController extends Notifier<RuleEditorState> {
   void setPriority(int value) => state = state.copyWith(priority: value);
   void clearError(String key) =>
       state = state.copyWith(errors: {...state.errors}..remove(key));
-  RuleInput? review({required String name, required String value}) {
-    final input = RuleInput(
+
+  /// Validates the form and saves the rule: "Activate Split Rule".
+  /// Server answers land on the field they are about; `kyc` is set when
+  /// identity verification is required first.
+  Future<SplitRule?> submit({
+    required String name,
+    required String value,
+  }) async {
+    if (state.busy) return null;
+    final rules = ref.read(rulesControllerProvider.notifier);
+    final (:input, :errors) = rules.check(
       name: name,
       type: state.type,
       destinationId: state.destinationId,
       method: state.method,
       value: value,
       priority: state.priority,
+      id: initial?.id,
     );
-    final errors = ref
-        .read(rulesControllerProvider.notifier)
-        .validate(input, id: initial?.id);
-    state = state.copyWith(errors: errors);
-    return errors.isEmpty ? input : null;
+    if (input == null) {
+      state = state.copyWith(errors: errors);
+      return null;
+    }
+    state = state.copyWith(busy: true, errors: const {});
+    try {
+      final rule = await rules.save(input, id: initial?.id);
+      if (ref.mounted) state = state.copyWith(busy: false);
+      return rule;
+    } on Object catch (error) {
+      if (!ref.mounted) return null;
+      state = state.copyWith(
+        busy: false,
+        errors: RulesController.placeError(error),
+      );
+      return null;
+    }
   }
 }
 

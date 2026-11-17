@@ -90,11 +90,12 @@ class _AppInputFieldState extends State<AppInputField> {
               horizontal: 14,
               vertical: 13,
             ),
-            border: _border(AppColors.border),
-            enabledBorder: _border(AppColors.border),
-            focusedBorder: _border(AppColors.action),
-            errorBorder: _border(AppColors.error),
-            focusedErrorBorder: _border(AppColors.error),
+            border: appInputBorder(AppColors.border),
+            enabledBorder: appInputBorder(AppColors.border),
+            disabledBorder: appInputBorder(AppColors.border),
+            focusedBorder: appInputBorder(AppColors.action),
+            errorBorder: appInputBorder(AppColors.error),
+            focusedErrorBorder: appInputBorder(AppColors.error),
             suffixIconConstraints: const BoxConstraints(
               minHeight: 48,
               minWidth: 48,
@@ -111,9 +112,10 @@ class _AppInputFieldState extends State<AppInputField> {
       ),
     ],
   );
-
-  OutlineInputBorder _border(Color color) => OutlineInputBorder(
-    borderRadius: BorderRadius.circular(12),
-    borderSide: BorderSide(color: color),
-  );
 }
+
+/// The rounded outline shared by the app's text fields.
+OutlineInputBorder appInputBorder(Color color) => OutlineInputBorder(
+  borderRadius: BorderRadius.circular(12),
+  borderSide: BorderSide(color: color),
+);

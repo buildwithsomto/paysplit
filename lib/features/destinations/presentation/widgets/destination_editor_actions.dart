@@ -1,21 +1,30 @@
 import 'package:flutter/material.dart';
 import 'package:paysplit/widgets/buttons/app_button.dart';
 
+/// "Save" and "Create Rule", as on the wallet and beneficiary overlays.
 class DestinationEditorActions extends StatelessWidget {
   const DestinationEditorActions({
     required this.onSave,
     required this.onSaveAndCreateRule,
+    this.busy = false,
     super.key,
   });
 
-  final VoidCallback onSave;
-  final VoidCallback onSaveAndCreateRule;
+  /// Null disables the button, for example while the form is still loading.
+  final VoidCallback? onSave, onSaveAndCreateRule;
+  final bool busy;
 
   @override
   Widget build(BuildContext context) {
-    final save = AppButton(label: 'Save', outlined: true, onPressed: onSave);
+    final save = AppButton(
+      label: 'Save',
+      outlined: true,
+      busy: busy,
+      onPressed: onSave,
+    );
     final createRule = AppButton(
-      label: 'Save and create rule',
+      label: 'Create Rule',
+      busy: busy,
       onPressed: onSaveAndCreateRule,
     );
     if (MediaQuery.textScalerOf(context).scale(14) > 18) {
@@ -29,7 +38,7 @@ class DestinationEditorActions extends StatelessWidget {
       spacing: 16,
       children: [
         Expanded(child: save),
-        Expanded(flex: 2, child: createRule),
+        Expanded(child: createRule),
       ],
     );
   }

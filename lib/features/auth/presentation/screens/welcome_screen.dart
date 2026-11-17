@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:paysplit/features/auth/presentation/controllers/auth_controller.dart';
+import 'package:paysplit/features/auth/presentation/controllers/account_controller.dart';
 import 'package:paysplit/widgets/buttons/app_button.dart';
 import 'package:paysplit/widgets/layout/onboarding_result_layout.dart';
 
@@ -10,7 +10,7 @@ class WelcomeScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final name = ref.watch(
-      authControllerProvider.select((state) => state.firstName),
+      accountControllerProvider.select((state) => state.firstName),
     );
     return OnboardingResultLayout(
       title: name.isEmpty

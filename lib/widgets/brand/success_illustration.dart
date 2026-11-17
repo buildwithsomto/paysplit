@@ -4,7 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:paysplit/theme/app_colors.dart';
 
-/// Original exported ray assets, placed and rotated as in node 6143:2302.
+/// The burst of seven rays behind a success badge: one ray image, rotated
+/// around the centre.
 class SuccessRays extends StatelessWidget {
   const SuccessRays({super.key});
 
@@ -17,10 +18,10 @@ class SuccessRays extends StatelessWidget {
         dimension: 910,
         child: Stack(
           children: [
-            for (var index = 0; index < _angles.length; index++)
+            for (final angle in _angles)
               Center(
                 child: Transform.rotate(
-                  angle: _angles[index] * math.pi / 180,
+                  angle: angle * math.pi / 180,
                   child: SizedBox.square(
                     dimension: 643.511,
                     child: Stack(
@@ -29,7 +30,7 @@ class SuccessRays extends StatelessWidget {
                           left: 643.511 * .5923,
                           top: 643.511 * .3552,
                           child: SvgPicture.asset(
-                            'assets/brand/imgEllipse${3250 + index}.svg',
+                            'assets/brand/success_ray.svg',
                           ),
                         ),
                       ],

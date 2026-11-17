@@ -5,11 +5,12 @@ import 'package:paysplit/features/destinations/presentation/controllers/destinat
 import 'package:paysplit/features/rules/presentation/controllers/rule_editor_controller.dart';
 import 'package:paysplit/features/rules/presentation/controllers/rules_controller.dart';
 import 'package:paysplit/features/rules/presentation/widgets/rule_destination_sheet.dart';
-import 'package:paysplit/features/rules/presentation/widgets/rule_review_sheet.dart';
 import 'package:paysplit/features/setup/presentation/widgets/setup_layout.dart';
 import 'package:paysplit/theme/app_typography.dart';
 import 'package:paysplit/widgets/app_svg_icon.dart';
 import 'package:paysplit/widgets/buttons/app_button.dart';
+import 'package:paysplit/widgets/feedback/app_notice.dart';
+import 'package:paysplit/widgets/feedback/verification_notice.dart';
 import 'package:paysplit/widgets/inputs/app_input_field.dart';
 import 'package:paysplit/widgets/inputs/app_select_field.dart';
 import 'package:paysplit/widgets/overlays/choice_sheet.dart';
@@ -60,7 +61,9 @@ class RuleEditorScreen extends ConsumerStatefulWidget {
 
 class _RuleEditorScreenState extends ConsumerState<RuleEditorScreen> {
   late final _name = TextEditingController(text: widget.initial?.name);
-  late final _value = TextEditingController(text: widget.initial?.input.value);
+  late final _value = TextEditingController(
+    text: widget.initial?.editableValue,
+  );
   @override
   void dispose() {
     _name.dispose();
@@ -68,18 +71,19 @@ class _RuleEditorScreenState extends ConsumerState<RuleEditorScreen> {
     super.dispose();
   }
 
-  Future<void> _review() async {
+  Future<void> _submit() async {
     FocusManager.instance.primaryFocus?.unfocus();
-    final input = ref
+    final saved = await ref
         .read(ruleEditorControllerProvider.notifier)
-        .review(name: _name.text, value: _value.text);
-    if (input == null) return;
-    final saved = await reviewRule(context, input, id: widget.initial?.id);
+        .submit(name: _name.text, value: _value.text);
     if (saved == null || !mounted) return;
     final router = GoRouter.of(context);
     if (widget.setup) {
       router.go('/home');
       router.push('/setup/progress');
+    } else if (widget.initial != null) {
+      showAppNotice(context, 'Split rule updated.');
+      router.pop();
     } else {
       final route = ModalRoute.of(context);
       final navigator = Navigator.of(context, rootNavigator: true);
@@ -95,6 +99,13 @@ class _RuleEditorScreenState extends ConsumerState<RuleEditorScreen> {
     final state = ref.watch(ruleEditorControllerProvider);
     final controller = ref.read(ruleEditorControllerProvider.notifier);
     final destinations = ref.watch(destinationsControllerProvider);
+    ref.listen(ruleEditorControllerProvider.select((s) => s.errors), (
+      previous,
+      next,
+    ) {
+      final message = next['form'];
+      if (message != null) showAppNotice(context, message);
+    });
     final isWallet = state.type == RuleDestinationType.wallet;
     final destinationName = isWallet
         ? destinations.wallets
@@ -109,6 +120,9 @@ class _RuleEditorScreenState extends ConsumerState<RuleEditorScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       spacing: 16,
       children: [
+        // Verification is the one failure that needs somewhere to go.
+        if (state.errors['kyc'] case final message?)
+          VerificationNotice(message: message),
         AppInputField(
           label: 'Rule Name *',
           controller: _name,
@@ -124,8 +138,8 @@ class _RuleEditorScreenState extends ConsumerState<RuleEditorScreen> {
             FocusManager.instance.primaryFocus?.unfocus();
             final priority = await showChoiceSheet(
               context,
-              title: 'Priority (1 is highest)',
-              choices: List.generate(10, (i) => i + 1),
+              title: 'Priority (1 Runs First)',
+              choices: List.generate(100, (i) => i + 1),
               label: (v) => '$v',
               selected: state.priority,
             );
@@ -134,15 +148,15 @@ class _RuleEditorScreenState extends ConsumerState<RuleEditorScreen> {
         ),
         Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
-          spacing: 8,
           children: [
             const Text('Destination Type *', style: AppTypography.label),
+            const SizedBox(height: 8),
             _DestinationTypeTile(
               wallet: true,
               selected: isWallet,
               onPressed: () => controller.setType(RuleDestinationType.wallet),
             ),
-            const SizedBox(height: 0),
+            const SizedBox(height: 16),
             _DestinationTypeTile(
               wallet: false,
               selected: !isWallet,
@@ -183,7 +197,7 @@ class _RuleEditorScreenState extends ConsumerState<RuleEditorScreen> {
                 FocusManager.instance.primaryFocus?.unfocus();
                 final method = await showChoiceSheet(
                   context,
-                  title: 'Allocation method',
+                  title: 'Allocation Method',
                   choices: AllocationMethod.values,
                   label: (v) => v == AllocationMethod.fixed
                       ? 'Fixed amount'
@@ -226,7 +240,11 @@ class _RuleEditorScreenState extends ConsumerState<RuleEditorScreen> {
         step: 4,
         title: 'Create Split Rule',
         onBack: () => context.canPop() ? context.pop() : context.go('/setup'),
-        bottom: AppButton(label: 'Review & Complete Setup', onPressed: _review),
+        bottom: AppButton(
+          label: 'Complete Setup',
+          busy: state.busy,
+          onPressed: _submit,
+        ),
         child: fields,
       );
     }
@@ -241,7 +259,11 @@ class _RuleEditorScreenState extends ConsumerState<RuleEditorScreen> {
           ? 24
           : 36,
       onClose: () => context.pop(),
-      bottom: AppButton(label: 'Review Split Rule', onPressed: _review),
+      bottom: AppButton(
+        label: widget.initial == null ? 'Activate Split Rule' : 'Save Changes',
+        busy: state.busy,
+        onPressed: _submit,
+      ),
       child: fields,
     );
   }
@@ -287,9 +309,12 @@ class _DestinationTypeTile extends StatelessWidget {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 alignment: Alignment.center,
-                child: AppSvgIcon(
-                  'assets/icons/rules/${wallet ? (selected ? 'd7477' : '2aabd') : (selected ? 'bc455' : 'a12a2')}.svg',
-                ),
+                child: AppSvgIcon(switch ((wallet, selected)) {
+                  (true, true) => 'assets/icons/rules/d7477.svg',
+                  (true, false) => 'assets/icons/rules/2aabd.svg',
+                  (false, true) => 'assets/icons/rules/bc455.svg',
+                  (false, false) => 'assets/icons/rules/a12a2.svg',
+                }),
               ),
               Expanded(
                 child: Column(

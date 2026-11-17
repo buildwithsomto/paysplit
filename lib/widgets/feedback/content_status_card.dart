@@ -2,43 +2,69 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:paysplit/core/presentation/content_phase.dart';
 import 'package:paysplit/theme/app_colors.dart';
+import 'package:paysplit/widgets/feedback/skeleton.dart';
 
-/// Shared loading/failure feedback without taking ownership of requests or data.
+/// Shared loading, offline and failure feedback for any API-backed screen.
+///
+/// A first load shows [skeleton], placeholders in the shape of the content.
+/// After that it never replaces content: whatever was last loaded stays
+/// visible below it, and this card says how current that content is.
 class ContentStatusCard extends StatelessWidget {
   const ContentStatusCard({
     required this.phase,
     required this.hasContent,
-    this.sample = false,
+    required this.subject,
+    required this.items,
+    this.message,
     this.retryFailed = false,
     this.updatedAt,
     this.onRetry,
-    this.onRestorePreview,
+    this.skeleton = const SkeletonRows(),
     super.key,
   });
   final ContentPhase phase;
-  final bool hasContent, sample, retryFailed;
+  final bool hasContent, retryFailed;
+
+  /// Names the screen's data in the title, for example `Wallets`.
+  final String subject;
+
+  /// Names the records in the body copy, for example `wallets`.
+  final String items;
+
+  /// Replaces the default failure copy, usually with the API's message.
+  final String? message;
   final DateTime? updatedAt;
-  final VoidCallback? onRetry, onRestorePreview;
+  final VoidCallback? onRetry;
+
+  /// Placeholders for the first load, shaped like this screen's content.
+  final Widget skeleton;
 
   @override
   Widget build(BuildContext context) {
     if (phase == ContentPhase.ready) return const SizedBox.shrink();
-    final busy =
-        phase == ContentPhase.loading || phase == ContentPhase.refreshing;
+    if (phase == ContentPhase.loading && !hasContent) {
+      return SkeletonLoader(
+        label: 'Loading ${subject.toLowerCase()}',
+        child: skeleton,
+      );
+    }
+    final busy = phase.isBusy;
     final title = switch (phase) {
-      ContentPhase.loading => 'Loading history',
+      ContentPhase.loading => 'Loading ${subject.toLowerCase()}',
       ContentPhase.refreshing => 'Checking for updates',
       ContentPhase.offline => 'You’re offline',
-      ContentPhase.error => 'History could not be updated',
+      ContentPhase.error => '$subject could not be updated',
       ContentPhase.ready => '',
     };
-    final message = busy
+    final body = busy
         ? hasContent
-              ? 'Your saved transactions stay visible while we check for updates.'
-              : 'Your records will appear when loading finishes.'
+              ? 'Your $items stay visible while we check for updates.'
+              : 'Your $items will appear when loading finishes.'
         : hasContent
-        ? 'Showing saved transactions. Balances and payment statuses may be out of date.'
-        : 'No saved transactions to show. Try again when you’re connected.';
+        ? 'Showing the last loaded $items. Balances and statuses may be out of date.'
+        : phase == ContentPhase.offline
+        ? 'Reconnect to load your $items.'
+        : message ?? 'We couldn’t load your $items. Please try again.';
     return Semantics(
       container: true,
       liveRegion: true,
@@ -53,11 +79,6 @@ class ContentStatusCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             spacing: 12,
             children: [
-              if (sample)
-                const Text(
-                  'SIMULATED CONNECTION ISSUE',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-                ),
               Row(
                 spacing: 12,
                 children: [
@@ -80,32 +101,21 @@ class ContentStatusCard extends StatelessWidget {
                   ),
                 ],
               ),
-              Text(message),
-              if (hasContent && updatedAt != null)
+              Text(body),
+              if (updatedAt case final updatedAt? when hasContent)
                 Text(
-                  'Last updated: ${DateFormat.yMMMd().add_jm().format(updatedAt!)} · Local time',
+                  'Last updated: ${DateFormat.yMMMd().add_jm().format(updatedAt)} · Local time',
                   style: const TextStyle(fontSize: 12),
                 ),
               if (retryFailed)
-                const Text(
-                  'Still offline. Your saved transactions and filters are unchanged.',
-                ),
-              if (onRetry != null || onRestorePreview != null)
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 4,
-                  children: [
-                    if (onRetry != null)
-                      TextButton(
-                        onPressed: busy ? null : onRetry,
-                        child: const Text('Retry'),
-                      ),
-                    if (onRestorePreview != null)
-                      TextButton(
-                        onPressed: onRestorePreview,
-                        child: const Text('Restore sample connection'),
-                      ),
-                  ],
+                Text('Still offline. Your $items and filters are unchanged.'),
+              if (onRetry != null)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton(
+                    onPressed: busy ? null : onRetry,
+                    child: const Text('Retry'),
+                  ),
                 ),
             ],
           ),

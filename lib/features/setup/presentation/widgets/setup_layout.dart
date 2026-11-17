@@ -5,6 +5,7 @@ import 'package:paysplit/theme/app_colors.dart';
 import 'package:paysplit/theme/app_theme.dart';
 import 'package:paysplit/widgets/app_svg_icon.dart';
 import 'package:paysplit/widgets/buttons/app_back_button.dart';
+import 'package:paysplit/widgets/layout/bottom_action_bar.dart';
 
 /// The salary checklist's shared Scaffold. Each step supplies fields and action.
 class SetupLayout extends StatelessWidget {
@@ -93,10 +94,7 @@ class SetupLayout extends StatelessWidget {
           ),
         ),
       ),
-      bottomNavigationBar: SafeArea(
-        minimum: const EdgeInsets.fromLTRB(16, 18, 16, 36),
-        child: bottom,
-      ),
+      bottomNavigationBar: BottomActionBar(child: bottom),
     ),
   );
 }

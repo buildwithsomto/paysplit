@@ -14,11 +14,6 @@ Future<String?> showRuleDestinationSheet(
   useRootNavigator: true,
   useSafeArea: true,
   isScrollControlled: true,
-  backgroundColor: const Color(0xFFFBFBFB),
-  clipBehavior: Clip.antiAlias,
-  shape: const RoundedRectangleBorder(
-    borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
-  ),
   builder: (_) => _DestinationChoices(type: type, ruleId: ruleId),
 );
 
@@ -66,7 +61,10 @@ class _DestinationChoices extends ConsumerWidget {
             Padding(
               padding: const EdgeInsets.all(16),
               child: Text(
-                'No saved ${wallet ? 'wallets' : 'beneficiaries'} yet. Create a destination first.',
+                // An empty list that never loaded is not "none saved".
+                data.hasData
+                    ? 'No saved ${wallet ? 'wallets' : 'beneficiaries'} yet. Create a destination first.'
+                    : 'Your ${wallet ? 'wallets' : 'beneficiaries'} couldn’t be loaded. Check your connection and try again.',
                 textAlign: TextAlign.center,
               ),
             ),
@@ -107,6 +105,8 @@ class _DestinationChoices extends ConsumerWidget {
                               children: [
                                 Text(
                                   choice.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(
                                     fontSize: 14,
                                     fontWeight: FontWeight.w500,
@@ -119,6 +119,8 @@ class _DestinationChoices extends ConsumerWidget {
                                     occupied
                                         ? 'Already linked to a rule'
                                         : choice.caption,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
                                     style: const TextStyle(
                                       fontSize: 12,
                                       color: Color(0xFF696969),

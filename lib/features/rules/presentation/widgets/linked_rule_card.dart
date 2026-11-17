@@ -66,7 +66,7 @@ class LinkedRuleCard extends ConsumerWidget {
                             ),
                           ),
                           Text(
-                            'Modified: ${DateFormat('MMM d, y').format(rule.updatedAt)}',
+                            'Last Modified: ${DateFormat('MMM, d y').format(rule.updatedAt)}',
                             style: const TextStyle(
                               fontSize: 12,
                               fontStyle: FontStyle.italic,
@@ -83,13 +83,16 @@ class LinkedRuleCard extends ConsumerWidget {
                           color: Color(0xFF121212),
                         ),
                       ),
-                      Text(
-                        'Priority ${rule.priority} · ${rule.status.name}',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Color(0xFF555653),
+                      // The design shows only the allocation; a paused rule
+                      // says so because it will not run.
+                      if (rule.status == RuleStatus.paused)
+                        const Text(
+                          'Paused',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFF555653),
+                          ),
                         ),
-                      ),
                     ],
                   ),
                 ),

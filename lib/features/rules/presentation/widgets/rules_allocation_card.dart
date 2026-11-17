@@ -5,14 +5,10 @@ import 'package:paysplit/core/formatting/money.dart';
 import 'package:paysplit/features/rules/presentation/controllers/rules_controller.dart';
 import 'package:paysplit/widgets/app_svg_icon.dart';
 
+/// How the expected salary is shared out, drawn from the server's summary.
 class RulesAllocationCard extends StatelessWidget {
-  const RulesAllocationCard({
-    required this.rules,
-    required this.salaryMinor,
-    super.key,
-  });
-  final List<SplitRule> rules;
-  final int salaryMinor;
+  const RulesAllocationCard({required this.summary, super.key});
+  final RulesSummary summary;
   static const _colors = [
     Color(0xFF33A7F5),
     Color(0xFF00D6D1),
@@ -22,8 +18,8 @@ class RulesAllocationCard extends StatelessWidget {
   ];
   @override
   Widget build(BuildContext context) {
-    final plan = previewAllocations(rules, salaryMinor);
-    final total = plan.fold<int>(0, (sum, item) => sum + item.amountMinor);
+    final salaryMinor = summary.baselineSalary ?? 0;
+    final segments = summary.segments;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 16),
       decoration: BoxDecoration(
@@ -44,13 +40,13 @@ class RulesAllocationCard extends StatelessWidget {
             children: [
               const Expanded(
                 child: Text(
-                  'Planned Allocation',
+                  'Allocation Progress',
                   style: TextStyle(fontSize: 14, color: Color(0xFF696969)),
                 ),
               ),
               Text(
                 salaryMinor > 0
-                    ? '${(100 * total / salaryMinor).round()}% of Salary'
+                    ? '${summary.allocatedPercent.round()}% of Salary'
                     : 'No baseline',
                 style: const TextStyle(fontSize: 14, color: Color(0xFF121212)),
               ),
@@ -63,18 +59,18 @@ class RulesAllocationCard extends StatelessWidget {
               child: Row(
                 children: [
                   if (salaryMinor > 0)
-                    for (var i = 0; i < plan.length; i++)
-                      if (plan[i].amountMinor > 0)
+                    for (final (i, segment) in segments.indexed)
+                      if (segment.amountMinor > 0)
                         Expanded(
-                          flex: plan[i].amountMinor,
+                          flex: segment.amountMinor,
                           child: ColoredBox(
                             color: _colors[i % _colors.length],
                             child: _AllocationStripe(index: i),
                           ),
                         ),
-                  if (salaryMinor == 0 || total < salaryMinor)
+                  if (salaryMinor == 0 || summary.remainder > 0)
                     Expanded(
-                      flex: salaryMinor == 0 ? 1 : salaryMinor - total,
+                      flex: salaryMinor == 0 ? 1 : summary.remainder,
                       child: const ColoredBox(
                         color: Color(0xABECECEC),
                         child: SizedBox.expand(),
@@ -88,12 +84,8 @@ class RulesAllocationCard extends StatelessWidget {
             spacing: 12,
             runSpacing: 8,
             children: [
-              for (var i = 0; i < plan.length; i++)
-                _Legend(
-                  color: _colors[i % _colors.length],
-                  name:
-                      '${plan[i].rule.name}${plan[i].skipped ? ' · insufficient baseline' : ''}',
-                ),
+              for (final (i, segment) in segments.indexed)
+                _Legend(color: _colors[i % _colors.length], name: segment.name),
               const _Legend(color: Color(0xFFD9D9D9), name: 'Spend Balance'),
             ],
           ),
@@ -118,8 +110,8 @@ class RulesAllocationCard extends StatelessWidget {
                     ),
                     Expanded(
                       child: _Amount(
-                        label: 'Expected Remainder',
-                        amount: salaryMinor - total,
+                        label: 'Spend Account Remainder',
+                        amount: summary.remainder,
                         green: true,
                       ),
                     ),
@@ -131,27 +123,19 @@ class RulesAllocationCard extends StatelessWidget {
                   children: [
                     Expanded(
                       child: _Amount(
-                        label: 'Planned Allocation',
-                        amount: total,
+                        label: 'Total Allocated',
+                        amount: summary.totalAllocated,
                       ),
                     ),
                     Expanded(
                       child: _Amount(
-                        label: 'Unallocated',
-                        amount: salaryMinor - total,
+                        label: 'Total Unallocated',
+                        amount: summary.remainder,
                       ),
                     ),
                   ],
                 ),
               ],
-            ),
-          ),
-          const Text(
-            'Estimate from active preview rules. Execution requires confirmed salary and API authorization.',
-            style: TextStyle(
-              fontSize: 12,
-              height: 1.4,
-              color: Color(0xFF555653),
             ),
           ),
         ],
@@ -177,6 +161,8 @@ class _Legend extends StatelessWidget {
       Flexible(
         child: Text(
           name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
           style: const TextStyle(fontSize: 12, color: Color(0xFF171918)),
         ),
       ),
@@ -229,7 +215,14 @@ class _Amount extends StatelessWidget {
 class _AllocationStripe extends StatelessWidget {
   const _AllocationStripe({required this.index});
   final int index;
-  static const _assets = ['a9243', 'f31ea', '588da', '9bf3c', '5e26e', '826c7'];
+  static const _assets = [
+    'assets/icons/rules/a9243.svg',
+    'assets/icons/rules/f31ea.svg',
+    'assets/icons/rules/588da.svg',
+    'assets/icons/rules/9bf3c.svg',
+    'assets/icons/rules/5e26e.svg',
+    'assets/icons/rules/826c7.svg',
+  ];
   @override
   Widget build(BuildContext context) => ClipRect(
     child: Stack(
@@ -243,7 +236,7 @@ class _AllocationStripe extends StatelessWidget {
             child: Transform.rotate(
               angle: math.pi / 4,
               child: AppSvgIcon(
-                'assets/icons/rules/${_assets[index % _assets.length]}.svg',
+                _assets[index % _assets.length],
                 width: 228.2,
                 height: 181.111,
               ),

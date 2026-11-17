@@ -4,14 +4,19 @@ import 'package:intl/intl.dart';
 abstract final class Money {
   static final _whole = NumberFormat('#,##0', 'en_NG');
 
-  static String format(int minorUnits, {bool showDecimals = false}) {
+  /// `-85000050` kobo as `−₦850,000.50`.
+  static String format(int minorUnits) =>
+      '${minorUnits < 0 ? '−' : ''}₦${plain(minorUnits)}';
+
+  /// The amount without sign or currency symbol, such as `850,000.50`: the
+  /// form an amount field shows and [parse] reads back.
+  static String plain(int minorUnits) {
     final magnitude = minorUnits.abs();
-    final major = magnitude ~/ 100;
     final fraction = magnitude % 100;
-    final decimals = showDecimals || fraction != 0
+    final decimals = fraction != 0
         ? '.${fraction.toString().padLeft(2, '0')}'
         : '';
-    return '${minorUnits < 0 ? '−' : ''}₦${_whole.format(major)}$decimals';
+    return '${_whole.format(magnitude ~/ 100)}$decimals';
   }
 
   /// Parses user input without a floating-point currency conversion.
@@ -23,7 +28,6 @@ abstract final class Money {
       return null;
     }
     final value = normalized.replaceAll(',', '');
-    if (!RegExp(r'^\d{1,12}(\.\d{1,2})?$').hasMatch(value)) return null;
     final parts = value.split('.');
     final major = int.parse(parts.first);
     final minor = parts.length == 2 ? int.parse(parts[1].padRight(2, '0')) : 0;

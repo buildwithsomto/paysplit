@@ -6,6 +6,7 @@ import 'package:paysplit/features/auth/presentation/widgets/auth_layout.dart';
 import 'package:paysplit/widgets/buttons/app_back_button.dart';
 import 'package:paysplit/widgets/buttons/app_button.dart';
 import 'package:paysplit/widgets/buttons/app_text_link.dart';
+import 'package:paysplit/widgets/feedback/app_notice.dart';
 import 'package:paysplit/widgets/inputs/app_input_field.dart';
 
 class SignupScreen extends ConsumerStatefulWidget {
@@ -27,14 +28,13 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
     super.dispose();
   }
 
-  void _submit() {
-    if (!ref
-        .read(authControllerProvider.notifier)
-        .validateSignup(_firstName.text, _lastName.text, _email.text)) {
-      return;
-    }
+  Future<void> _submit() async {
     FocusManager.instance.primaryFocus?.unfocus();
-    context.push('/signup/password');
+    final sent = await ref
+        .read(authControllerProvider.notifier)
+        .signup(_firstName.text, _lastName.text, _email.text);
+    if (!mounted || !sent) return;
+    context.push('/verify');
   }
 
   void _login() {
@@ -44,8 +44,15 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final errors = ref.watch(authControllerProvider).errors;
+    final state = ref.watch(authControllerProvider);
+    final errors = state.errors;
     final controller = ref.read(authControllerProvider.notifier);
+    ref.listen(authControllerProvider.select((s) => s.errors['form']), (
+      previous,
+      next,
+    ) {
+      if (next != null) showAppNotice(context, next);
+    });
     return AuthLayout(
       header: Align(
         alignment: Alignment.centerLeft,
@@ -90,7 +97,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
               onSubmitted: (_) => _submit(),
             ),
             const SizedBox(height: 26),
-            AppButton(label: 'Sign Up', onPressed: _submit),
+            AppButton(label: 'Sign Up', busy: state.busy, onPressed: _submit),
             const SizedBox(height: 10),
             Center(
               child: AppTextLink(

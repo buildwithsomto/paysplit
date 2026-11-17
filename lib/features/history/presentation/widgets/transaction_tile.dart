@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:paysplit/core/formatting/money.dart';
@@ -15,7 +16,7 @@ class TransactionStatusBadge extends StatelessWidget {
         const Color(0xFFEEF5F0),
         const Color(0xFF367C46),
       ),
-      TransactionStatus.pending || TransactionStatus.uncertain => (
+      TransactionStatus.pending => (
         const Color(0xFFFFF4DB),
         const Color(0xFF875B00),
       ),
@@ -55,7 +56,7 @@ class TransactionTile extends StatelessWidget {
     this.showAmount = true,
     super.key,
   });
-  final TransactionViewData record;
+  final Transaction record;
   final bool walletActivity;
   final bool showAmount;
   @override
@@ -84,8 +85,12 @@ class TransactionTile extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       spacing: 4,
       children: [
+        // One line, so a long name never pushes the row out of step with
+        // its amount; the full name is on the detail screen.
         Text(
           record.title,
+          maxLines: largeText ? 2 : 1,
+          overflow: TextOverflow.ellipsis,
           style: const TextStyle(
             fontSize: 14,
             height: 1.2,
@@ -94,6 +99,8 @@ class TransactionTile extends StatelessWidget {
         ),
         Text(
           DateFormat('MMM d, y').format(record.time),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
           style: const TextStyle(
             fontSize: 12,
             height: 1.2,
@@ -156,15 +163,14 @@ class TransactionTile extends StatelessWidget {
                   children: [
                     symbol,
                     const SizedBox(width: 4),
-                    Expanded(flex: 5, child: description),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      flex: 4,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        spacing: 2,
-                        children: [amount, badge],
-                      ),
+                    // The amount takes the width it needs and the title
+                    // gets the rest.
+                    Expanded(child: description),
+                    const SizedBox(width: 12),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      spacing: 2,
+                      children: [amount, badge],
                     ),
                   ],
                 ),
@@ -172,4 +178,66 @@ class TransactionTile extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The month a group of transactions belongs to, with the design's rule
+/// running to the trailing edge. The year is added outside the current one.
+class MonthHeading extends StatelessWidget {
+  const MonthHeading({required this.month, super.key});
+  final DateTime month;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    spacing: 10,
+    children: [
+      Text(
+        DateFormat(
+          month.year == DateTime.now().year ? 'MMMM' : 'MMMM y',
+        ).format(month),
+        style: const TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w500,
+          color: Color(0xFF171918),
+        ),
+      ),
+      Expanded(
+        child: SizedBox(
+          height: 1,
+          child: SvgPicture.asset(
+            'assets/icons/history/6e8f7.svg',
+            fit: BoxFit.fill,
+            excludeFromSemantics: true,
+          ),
+        ),
+      ),
+    ],
+  );
+}
+
+/// Transactions grouped under month headings, as activity cards show them.
+class TransactionMonthList extends StatelessWidget {
+  const TransactionMonthList({
+    required this.records,
+    this.walletActivity = false,
+    super.key,
+  });
+  final List<Transaction> records;
+  final bool walletActivity;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      for (final (index, record) in records.indexed) ...[
+        if (index == 0 ||
+            records[index - 1].time.month != record.time.month ||
+            records[index - 1].time.year != record.time.year)
+          Padding(
+            padding: EdgeInsets.only(top: index == 0 ? 0 : 12, bottom: 8),
+            child: MonthHeading(month: record.time),
+          ),
+        TransactionTile(record: record, walletActivity: walletActivity),
+      ],
+    ],
+  );
 }

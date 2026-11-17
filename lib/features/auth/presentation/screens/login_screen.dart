@@ -2,13 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:paysplit/core/constants/app_assets.dart';
+import 'package:paysplit/core/session/session_providers.dart';
 import 'package:paysplit/features/auth/presentation/controllers/auth_controller.dart';
 import 'package:paysplit/features/auth/presentation/widgets/auth_layout.dart';
 import 'package:paysplit/theme/app_colors.dart';
 import 'package:paysplit/widgets/app_svg_icon.dart';
 import 'package:paysplit/widgets/buttons/app_button.dart';
 import 'package:paysplit/widgets/buttons/app_text_link.dart';
-import 'package:paysplit/widgets/feedback/preview_notice.dart';
+import 'package:paysplit/widgets/feedback/app_notice.dart';
 import 'package:paysplit/widgets/inputs/app_input_field.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
@@ -22,21 +23,44 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _password = TextEditingController();
 
   @override
+  void initState() {
+    super.initState();
+    _email.text = ref.read(authControllerProvider).email;
+    if (ref.read(sessionControllerProvider).expired) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          showAppNotice(
+            context,
+            'Your session has ended. Please log in again.',
+          );
+        }
+      });
+    }
+  }
+
+  @override
   void dispose() {
     _email.dispose();
     _password.dispose();
     super.dispose();
   }
 
-  void _submit() {
-    if (!ref
-        .read(authControllerProvider.notifier)
-        .validateLogin(_email.text, _password.text)) {
-      return;
-    }
+  Future<void> _submit() async {
     FocusManager.instance.primaryFocus?.unfocus();
+    final next = await ref
+        .read(authControllerProvider.notifier)
+        .login(_email.text, _password.text);
+    if (!mounted || next == null) return;
     _password.clear();
-    context.go('/home');
+    if (next == AuthNext.verifyEmail) {
+      showAppNotice(
+        context,
+        'Finish creating your account. We’ve emailed you a new code.',
+      );
+      context.push('/verify');
+    } else {
+      context.go('/home');
+    }
   }
 
   void _open(String path) {
@@ -48,19 +72,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Widget build(BuildContext context) {
     final state = ref.watch(authControllerProvider);
     final controller = ref.read(authControllerProvider.notifier);
+    ref.listen(authControllerProvider.select((s) => s.errors['form']), (
+      previous,
+      next,
+    ) {
+      if (next != null) showAppNotice(context, next);
+    });
     return AuthLayout(
       topPadding: 42,
       title: 'Welcome back!',
       description: const Text('Enter your email and password to log in.'),
-      footer: AppTextLink(
-        label: 'Switch Account',
-        onPressed: () {
-          _email.clear();
-          _password.clear();
-          controller.reset();
-          showPreviewNotice(context, 'Enter the details for another account.');
-        },
-      ),
       child: AutofillGroup(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -95,7 +116,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               ),
             ),
             const SizedBox(height: 26),
-            AppButton(label: 'Login', onPressed: _submit),
+            AppButton(label: 'Login', busy: state.busy, onPressed: _submit),
             const SizedBox(height: 10),
             Center(
               child: AppTextLink(
@@ -117,9 +138,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                onPressed: () => showPreviewNotice(
+                onPressed: () => showAppNotice(
                   context,
-                  'Biometric sign-in will be available after account integration.',
+                  'Biometric sign-in isn’t available yet. Log in with your password.',
                 ),
                 icon: const AppSvgIcon(AppAssets.scan),
               ),

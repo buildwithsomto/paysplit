@@ -1,15 +1,17 @@
-import 'package:paysplit/features/rules/presentation/controllers/split_execution_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:paysplit/core/network/api_exception.dart';
+import 'package:paysplit/widgets/feedback/app_notice.dart';
+import 'package:paysplit/widgets/overlays/confirm_sheet.dart';
 import 'package:go_router/go_router.dart';
 import 'package:paysplit/core/formatting/money.dart';
 import 'package:paysplit/features/destinations/presentation/controllers/destinations_controller.dart';
 import 'package:paysplit/features/rules/presentation/controllers/rules_controller.dart';
-import 'package:paysplit/features/rules/presentation/widgets/rule_review_sheet.dart';
+import 'package:paysplit/features/rules/presentation/widgets/rule_review_row.dart';
 import 'package:paysplit/widgets/app_svg_icon.dart';
-import 'package:paysplit/widgets/buttons/app_button.dart';
 import 'package:paysplit/widgets/layout/app_page_layout.dart';
 import 'package:paysplit/widgets/overlays/success_sheet_layout.dart';
+import 'package:paysplit/features/setup/presentation/controllers/setup_controller.dart';
 
 class RuleDetailScreen extends ConsumerWidget {
   const RuleDetailScreen({required this.id, super.key});
@@ -21,11 +23,10 @@ class RuleDetailScreen extends ConsumerWidget {
         .where((r) => r.id == id)
         .firstOrNull;
     final destinations = ref.watch(destinationsControllerProvider);
-    final sampleRuns = ref
-        .watch(splitExecutionProvider)
-        .executions
-        .where((execution) => execution.lines.any((line) => line.ruleId == id))
-        .length;
+    // The salary source the rule runs on.
+    final employer = ref.watch(
+      setupControllerProvider.select((s) => s.employer),
+    );
     return AppPageLayout(
       title: 'Details',
       headerTop: 31,
@@ -45,11 +46,7 @@ class RuleDetailScreen extends ConsumerWidget {
                 PopupMenuItem(
                   value: 'status',
                   child: Text(
-                    rule.status == RuleStatus.active
-                        ? 'Pause'
-                        : rule.status == RuleStatus.paused
-                        ? 'Resume'
-                        : 'Review & activate',
+                    rule.status == RuleStatus.active ? 'Pause' : 'Resume',
                   ),
                 ),
                 const PopupMenuItem(
@@ -64,34 +61,43 @@ class RuleDetailScreen extends ConsumerWidget {
                 if (action == 'edit') {
                   context.push('/rules/new?id=$id');
                 } else if (action == 'status') {
-                  if (rule.status == RuleStatus.active) {
-                    ref.read(rulesControllerProvider.notifier).pause(id);
-                  } else {
-                    await reviewRule(context, rule.input, id: id);
+                  final pause = rule.status == RuleStatus.active;
+                  try {
+                    await ref
+                        .read(rulesControllerProvider.notifier)
+                        .setPaused(id, pause);
+                    if (context.mounted) {
+                      showAppNotice(
+                        context,
+                        pause
+                            ? 'Rule paused. Splits will skip it.'
+                            : 'Rule resumed.',
+                      );
+                    }
+                  } on Object catch (error) {
+                    if (context.mounted) {
+                      showAppNotice(context, describeError(error));
+                    }
                   }
                 } else {
-                  final confirmed = await showDialog<bool>(
-                    context: context,
-                    builder: (context) => AlertDialog(
-                      title: const Text('Delete split rule?'),
-                      content: const Text(
-                        'Remove this rule from future allocations? Historical transactions are retained.',
-                      ),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(context, false),
-                          child: const Text('Cancel'),
-                        ),
-                        TextButton(
-                          onPressed: () => Navigator.pop(context, true),
-                          child: const Text('Delete'),
-                        ),
-                      ],
-                    ),
+                  final confirmed = await showConfirmSheet(
+                    context,
+                    title: 'Delete split rule?',
+                    message:
+                        '${rule.name} will stop running on future salary payments. Past transactions stay in your history.',
+                    action: 'Delete',
+                    destructive: true,
                   );
-                  if (confirmed == true && context.mounted) {
-                    ref.read(rulesControllerProvider.notifier).delete(id);
+                  if (!confirmed || !context.mounted) return;
+                  try {
+                    await ref.read(rulesControllerProvider.notifier).delete(id);
+                    if (!context.mounted) return;
+                    showAppNotice(context, 'Split rule deleted.');
                     context.canPop() ? context.pop() : context.go('/rules');
+                  } on Object catch (error) {
+                    if (context.mounted) {
+                      showAppNotice(context, describeError(error));
+                    }
                   }
                 }
               },
@@ -125,9 +131,7 @@ class RuleDetailScreen extends ConsumerWidget {
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Text(
-                            rule.method == AllocationMethod.fixed
-                                ? 'Fixed Amount'
-                                : 'Percentage',
+                            rule.method.label,
                             style: const TextStyle(
                               fontSize: 14,
                               color: Colors.black,
@@ -141,7 +145,7 @@ class RuleDetailScreen extends ConsumerWidget {
                         runSpacing: 8,
                         children: [
                           Text(
-                            Money.format(0),
+                            Money.format(rule.allocatedThisMonthMinor),
                             style: const TextStyle(
                               fontSize: 28,
                               fontWeight: FontWeight.w700,
@@ -178,55 +182,25 @@ class RuleDetailScreen extends ConsumerWidget {
                         value: ruleDestinationName(rule, destinations),
                       ),
                       RuleReviewRow(
-                        label: 'Allocation',
+                        label: 'Condition',
+                        value: employer.isEmpty
+                            ? 'Every salary credit'
+                            : employer,
+                      ),
+                      RuleReviewRow(
+                        label: 'Method',
                         value: rule.allocationLabel,
                       ),
                       RuleReviewRow(
                         label: 'Priority',
-                        value: '${rule.priority} (1 is highest)',
+                        value: '${rule.priority}',
                       ),
-                      RuleReviewRow(
-                        label: 'Status',
-                        value: rule.status == RuleStatus.active
-                            ? 'Active on this device'
-                            : rule.status.name,
-                      ),
+                      RuleReviewRow(label: 'Status', value: rule.status.label),
                     ],
                   ),
                 ),
-                const Text(
-                  'No confirmed allocations yet.',
-                  style: TextStyle(fontSize: 14, height: 1.5),
-                ),
-                if (rule.status != RuleStatus.active)
-                  AppButton(
-                    label: 'Review & Activate',
-                    onPressed: () => reviewRule(context, rule.input, id: id),
-                  ),
-                const Text(
-                  'Execution History',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                    color: Color(0xFF171918),
-                  ),
-                ),
-                Text(
-                  sampleRuns == 0
-                      ? 'No executions yet.'
-                      : '$sampleRuns sample ${sampleRuns == 1 ? 'run' : 'runs'} · No money moved',
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: Color(0xFF696969),
-                  ),
-                ),
                 TextButton(
-                  onPressed: () => context.push(
-                    Uri(
-                      path: '/split-history',
-                      queryParameters: {'rule': id},
-                    ).toString(),
-                  ),
+                  onPressed: () => context.push('/split-history'),
                   child: const Text('View Execution History'),
                 ),
               ],
@@ -235,22 +209,15 @@ class RuleDetailScreen extends ConsumerWidget {
   }
 }
 
-class RuleSavedSheet extends ConsumerWidget {
-  const RuleSavedSheet({required this.id, super.key});
-  final String id;
+/// Confirms a newly created rule. New rules are always active.
+class RuleSavedSheet extends StatelessWidget {
+  const RuleSavedSheet({super.key});
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final rule = ref
-        .watch(rulesControllerProvider)
-        .where((r) => r.id == id)
-        .firstOrNull;
-    return SuccessSheetLayout(
-      title: rule?.status == RuleStatus.active
-          ? 'Split Rule Created'
-          : 'Split Rule Saved as Draft',
-      message: 'Saved locally. No money has moved.',
-      onClose: () => context.pop(),
-      onHome: () => context.go('/home'),
-    );
-  }
+  Widget build(BuildContext context) => SuccessSheetLayout(
+    title: 'Split Rule Created',
+    message: 'It runs each time your salary arrives.',
+    onClose: () => context.pop(),
+    onHome: () => context.go('/home'),
+  );
 }
